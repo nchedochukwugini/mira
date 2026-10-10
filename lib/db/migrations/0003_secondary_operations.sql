@@ -1,0 +1,30 @@
+CREATE TABLE IF NOT EXISTS secondary_operations (
+  id uuid PRIMARY KEY,
+  operation_type text NOT NULL CHECK (operation_type IN ('placement','cancellation')),
+  market_id text NOT NULL,
+  wallet_address text NOT NULL,
+  cluster text NOT NULL,
+  side text,
+  price_units numeric,
+  share_units numeric,
+  buy boolean,
+  target_order text,
+  recent_blockhash text NOT NULL,
+  last_valid_block_height bigint NOT NULL,
+  expected_message_base64 text NOT NULL,
+  expected_instructions jsonb NOT NULL,
+  maker_accounts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  snapshot_slot bigint NOT NULL,
+  expires_at timestamptz NOT NULL,
+  status text NOT NULL DEFAULT 'built',
+  signature text UNIQUE,
+  chain_result jsonb,
+  notification_status text NOT NULL DEFAULT 'not_applicable',
+  notification_attempted_at timestamptz,
+  reconciliation_status text NOT NULL DEFAULT 'pending',
+  reconciled_order jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS secondary_operations_wallet_market_idx ON secondary_operations(wallet_address,market_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS secondary_operations_status_idx ON secondary_operations(status,updated_at);

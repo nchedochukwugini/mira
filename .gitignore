@@ -1,0 +1,57 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+
+# Environment credentials
+.env*
+!.env.example
+!.env.*.example
+
+# Deployment
+.vercel/
+
+# Logs, caches and temporary files
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.cache/
+.turbo/
+.tmp-*
+*.tmp
+*.log
+
+# Local databases and backups
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.dump
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Private development session notes
+/codex-session-*.md
+
+# Local verification artifacts
+/verification-artifacts/
+/panta-x11.png
+/research/verification/screenshots/
+/training/artifacts/

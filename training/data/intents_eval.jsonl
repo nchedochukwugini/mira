@@ -1,0 +1,28 @@
+{"text":"hey there MIRA","intent":"greeting"}
+{"text":"see you later","intent":"greeting"}
+{"text":"could you help me understand what you do","intent":"help"}
+{"text":"what kinds of questions can I ask","intent":"help"}
+{"text":"look for Bitcoin prediction markets","intent":"market_discovery"}
+{"text":"are there any markets related to Trump","intent":"market_discovery"}
+{"text":"which prediction has traded the most","intent":"market_analysis"}
+{"text":"put Bitcoin next to Ethereum and compare their odds","intent":"market_analysis"}
+{"text":"can you walk me through this market","intent":"market_detail"}
+{"text":"when will this contract resolve","intent":"market_detail"}
+{"text":"I don't understand what you're looking for","intent":"clarification"}
+{"text":"about which event","intent":"clarification"}
+{"text":"do you know anything about the moon","intent":"general"}
+{"text":"why is the sky blue","intent":"general"}
+{"text":"good to see you","intent":"greeting"}
+{"text":"thanks, that helps","intent":"greeting"}
+{"text":"can you walk me through your features","intent":"help"}
+{"text":"what can I use MIRA for","intent":"help"}
+{"text":"find some ETH markets for me","intent":"market_discovery"}
+{"text":"show prediction markets about interest rates","intent":"market_discovery"}
+{"text":"which markets have seen the largest changes","intent":"market_analysis"}
+{"text":"compare odds for BTC and ETH right now","intent":"market_analysis"}
+{"text":"tell me what this contract is about","intent":"market_detail"}
+{"text":"what is the close date for this market","intent":"market_detail"}
+{"text":"I'm unclear which market you mean","intent":"clarification"}
+{"text":"could you tell me which event","intent":"clarification"}
+{"text":"how do volcanoes erupt","intent":"general"}
+{"text":"what is the meaning of democracy","intent":"general"}

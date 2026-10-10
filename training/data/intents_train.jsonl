@@ -1,0 +1,128 @@
+{"text":"hi","intent":"greeting"}
+{"text":"hello there","intent":"greeting"}
+{"text":"hey MIRA","intent":"greeting"}
+{"text":"good morning","intent":"greeting"}
+{"text":"how are you doing","intent":"greeting"}
+{"text":"thanks for that","intent":"greeting"}
+{"text":"thank you","intent":"greeting"}
+{"text":"goodbye","intent":"greeting"}
+{"text":"what can you do for me","intent":"help"}
+{"text":"what is MIRA","intent":"help"}
+{"text":"how can you help me","intent":"help"}
+{"text":"what can I ask you","intent":"help"}
+{"text":"tell me what you can do","intent":"help"}
+{"text":"what are your capabilities","intent":"help"}
+{"text":"how do I use this assistant","intent":"help"}
+{"text":"what topics can you help with","intent":"help"}
+{"text":"show me Bitcoin markets","intent":"market_discovery"}
+{"text":"find markets about the Fed","intent":"market_discovery"}
+{"text":"what prediction markets are available","intent":"market_discovery"}
+{"text":"search for markets involving Trump","intent":"market_discovery"}
+{"text":"look up Ethereum markets","intent":"market_discovery"}
+{"text":"list markets about inflation","intent":"market_discovery"}
+{"text":"what markets mention elections","intent":"market_discovery"}
+{"text":"find prediction markets on crypto","intent":"market_discovery"}
+{"text":"which markets have the highest volume","intent":"market_analysis"}
+{"text":"show me the biggest movers","intent":"market_analysis"}
+{"text":"compare current Bitcoin and Ethereum probabilities","intent":"market_analysis"}
+{"text":"what markets are moving today","intent":"market_analysis"}
+{"text":"rank these by volume","intent":"market_analysis"}
+{"text":"which markets have the most liquidity","intent":"market_analysis"}
+{"text":"compare the prices for Bitcoin and Ethereum","intent":"market_analysis"}
+{"text":"what changed in these markets over the last day","intent":"market_analysis"}
+{"text":"tell me more about this market","intent":"market_detail"}
+{"text":"what is the probability for this one","intent":"market_detail"}
+{"text":"when does the selected market close","intent":"market_detail"}
+{"text":"explain the second market","intent":"market_detail"}
+{"text":"what is its current YES price","intent":"market_detail"}
+{"text":"show details for that market","intent":"market_detail"}
+{"text":"why is this market interesting","intent":"market_detail"}
+{"text":"tell me about the first one","intent":"market_detail"}
+{"text":"what's happening","intent":"clarification"}
+{"text":"compare these markets","intent":"clarification"}
+{"text":"which one do you mean","intent":"clarification"}
+{"text":"can you explain that","intent":"clarification"}
+{"text":"what should I look at","intent":"clarification"}
+{"text":"which market are you referring to","intent":"clarification"}
+{"text":"I am not sure what you mean","intent":"clarification"}
+{"text":"can you be more specific","intent":"clarification"}
+{"text":"do you know about Trump","intent":"general"}
+{"text":"what is the capital of Japan","intent":"general"}
+{"text":"tell me a joke","intent":"general"}
+{"text":"what does blockchain mean","intent":"general"}
+{"text":"can you explain photosynthesis","intent":"general"}
+{"text":"what is two plus two","intent":"general"}
+{"text":"who wrote Pride and Prejudice","intent":"general"}
+{"text":"tell me about the history of jazz","intent":"general"}
+{"text":"hey MIRA, how's it going","intent":"greeting"}
+{"text":"good afternoon","intent":"greeting"}
+{"text":"good evening, MIRA","intent":"greeting"}
+{"text":"hiya","intent":"greeting"}
+{"text":"hello MIRA","intent":"greeting"}
+{"text":"I'm doing well, thanks","intent":"greeting"}
+{"text":"cheers","intent":"greeting"}
+{"text":"bye for now","intent":"greeting"}
+{"text":"talk to you later","intent":"greeting"}
+{"text":"appreciate your help","intent":"greeting"}
+{"text":"explain what MIRA can help me with","intent":"help"}
+{"text":"what are you able to do","intent":"help"}
+{"text":"can you tell me your abilities","intent":"help"}
+{"text":"what kind of market help do you offer","intent":"help"}
+{"text":"give me examples of questions for MIRA","intent":"help"}
+{"text":"how does this assistant work","intent":"help"}
+{"text":"can you help me compare markets","intent":"help"}
+{"text":"what can I explore here","intent":"help"}
+{"text":"describe your market research features","intent":"help"}
+{"text":"what does MIRA know how to do","intent":"help"}
+{"text":"search Bitcoin prediction markets","intent":"market_discovery"}
+{"text":"show markets connected to Ethereum","intent":"market_discovery"}
+{"text":"find prediction markets for Donald Trump","intent":"market_discovery"}
+{"text":"are there markets about Federal Reserve rates","intent":"market_discovery"}
+{"text":"browse markets related to the election","intent":"market_discovery"}
+{"text":"I want to see current markets about inflation","intent":"market_discovery"}
+{"text":"look for any prediction market on the Fed","intent":"market_discovery"}
+{"text":"find me crypto markets","intent":"market_discovery"}
+{"text":"show current markets about sports","intent":"market_discovery"}
+{"text":"search the market catalog for CPI","intent":"market_discovery"}
+{"text":"discover markets tied to Bitcoin","intent":"market_discovery"}
+{"text":"what's the biggest volume market","intent":"market_analysis"}
+{"text":"rank markets by trading volume","intent":"market_analysis"}
+{"text":"which prediction markets moved the most today","intent":"market_analysis"}
+{"text":"how did Bitcoin probabilities change this week","intent":"market_analysis"}
+{"text":"compare the current odds for BTC versus ETH","intent":"market_analysis"}
+{"text":"which market is most liquid","intent":"market_analysis"}
+{"text":"show the strongest price movement","intent":"market_analysis"}
+{"text":"what is trending in prediction markets","intent":"market_analysis"}
+{"text":"compare probabilities between these two markets","intent":"market_analysis"}
+{"text":"which market has the most activity","intent":"market_analysis"}
+{"text":"summarize price changes over 24 hours","intent":"market_analysis"}
+{"text":"tell me about that one","intent":"market_detail"}
+{"text":"what are the YES and NO prices here","intent":"market_detail"}
+{"text":"give me more information on the selected market","intent":"market_detail"}
+{"text":"what is the volume on this market","intent":"market_detail"}
+{"text":"when is this market scheduled to resolve","intent":"market_detail"}
+{"text":"explain the third result","intent":"market_detail"}
+{"text":"what data does Panta have for this market","intent":"market_detail"}
+{"text":"show me the details of that one","intent":"market_detail"}
+{"text":"why did this market move","intent":"market_detail"}
+{"text":"what are the current odds here","intent":"market_detail"}
+{"text":"what do you mean by that","intent":"clarification"}
+{"text":"which topic are you asking about","intent":"clarification"}
+{"text":"I need to be more specific","intent":"clarification"}
+{"text":"could you clarify the question","intent":"clarification"}
+{"text":"do you mean a market or a topic","intent":"clarification"}
+{"text":"I don't know which market you mean","intent":"clarification"}
+{"text":"can you narrow that down for me","intent":"clarification"}
+{"text":"what would you like me to research","intent":"clarification"}
+{"text":"which result do you want me to explain","intent":"clarification"}
+{"text":"can you give me a little more context","intent":"clarification"}
+{"text":"do you know about Donald Trump","intent":"general"}
+{"text":"tell me about the planet Mars","intent":"general"}
+{"text":"how do rainbows form","intent":"general"}
+{"text":"what is the difference between weather and climate","intent":"general"}
+{"text":"explain how a refrigerator works","intent":"general"}
+{"text":"who was Marie Curie","intent":"general"}
+{"text":"what's a good way to learn Spanish","intent":"general"}
+{"text":"can you explain the water cycle","intent":"general"}
+{"text":"what is the largest ocean","intent":"general"}
+{"text":"tell me something interesting about birds","intent":"general"}

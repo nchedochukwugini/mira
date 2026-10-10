@@ -1,0 +1,37 @@
+{
+  "name": "mira-market-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --conditions=react-server --import tsx --test lib/ai/ai.test.mjs lib/intelligence/core.test.mjs lib/intelligence/conversation.test.mjs lib/intelligence/analyze-market-question.test.mjs lib/intelligence/analyze-route.test.mjs lib/intelligence/verified-activity.test.mjs lib/intelligence/market-reasoning.test.mjs lib/intelligence/market-intelligence.test.mjs lib/intelligence/cross-market.test.mjs lib/intelligence/market-suggestions.test.mjs lib/panta/client.test.mjs lib/panta/trade-safety.test.mjs lib/panta/trade-quote-route.test.mjs lib/panta/transaction-routes.test.mjs lib/panta/instruction-contract.test.mjs lib/panta/secondary-instructions.test.mjs lib/panta/secondary-book.test.mjs lib/panta/secondary-lifecycle.test.mjs lib/panta/trade-data.test.mjs lib/panta/clob.test.mjs lib/panta/microstructure.test.mjs lib/solana/rpc.test.mjs lib/research/research.test.mjs lib/db/database.test.mjs lib/ui/composer-state.test.mjs",
+    "db:migrate": "tsx lib/db/migrate.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "lucide-react": "^0.468.0",
+    "motion": "^12.23.0",
+    "next": "^16.0.0",
+    "pg": "^8.23.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.0"
+  }
+}
