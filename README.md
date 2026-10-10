@@ -10,6 +10,26 @@ MIRA is designed to help users understand what a market is asking, what the avai
 
 > Data integrity comes first. MIRA distinguishes provider data, retrieved research, observed on-chain activity, analytical inference, and unavailable information. It does not intentionally replace missing live data with demonstration fixtures.
 
+## Interface screenshots
+
+These screenshots were captured on 2026-10-10 after the homepage and live Panta market listings loaded. Market data and availability are point-in-time; some values in the selected market panel were unavailable. The quote panel shows a secondary order ticket before wallet connection. No quote was requested and no transaction was prepared or submitted.
+
+### Homepage
+
+![MIRA homepage with market listings](docs/screenshots/homepage.png)
+
+### Chat panel
+
+![MIRA new analysis workspace and selected market panel](docs/screenshots/chat-panel.png)
+
+### Market panel
+
+![MIRA market explorer after provider listings loaded](docs/screenshots/market-panel.png)
+
+### Quote panel
+
+![MIRA secondary order ticket before wallet connection](docs/screenshots/quote-panel.png)
+
 ## What MIRA does
 
 ### AI market intelligence
