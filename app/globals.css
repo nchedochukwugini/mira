@@ -217,6 +217,8 @@
 .trade-ticket__mira>span:last-child{min-width:0}
 .trade-ticket__mira .panel-kicker{font-size:7px}
 .trade-ticket__heading{min-width:0;display:block}
+.secondary-ticket__topline{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+.secondary-ticket__topline .wallet-connect,.secondary-ticket__topline .wallet-connected{height:30px;padding:0 9px;font-size:9px}
 .trade-ticket__badges{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
 .trade-ticket__badges .panel-kicker{letter-spacing:.06em}
 .trade-ticket__status,.trade-ticket__cluster{display:inline-flex;align-items:center;min-height:16px;padding:2px 5px;border:1px solid #dce6d6;border-radius:4px;background:#f4f8ef;color:#61775c;font:600 7px/1.15 var(--mono);letter-spacing:.025em}
