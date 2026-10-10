@@ -1,7 +1,11 @@
-import type { OrderBookSnapshot, OutcomeOrderBook } from "@/lib/panta/types";
+import type { OrderBookSnapshot, OutcomeOrderBook, QuoteAmount } from "@/lib/panta/types";
+import type { QuoteAsset } from "@/lib/panta/types";
 
 export type MicrostructureHistoryPoint = {
   marketId: string;
+  quoteAsset?: QuoteAsset | null;
+  activeVolume?: QuoteAmount;
+  totalVolume?: QuoteAmount;
   observedAt: number;
   slot: number | null;
   source: "panta-solana";
@@ -52,6 +56,7 @@ export type MarketStructureSummary = {
 
 export type MicrostructureResult = {
   marketId: string;
+  quoteAsset?: QuoteAsset | null;
   timestamp: number;
   source: "panta-solana";
   provenance: MicrostructureHistoryPoint["provenance"];
@@ -151,7 +156,8 @@ function activityStatus(activity: OrderBookSnapshot["activity"], status: OrderBo
 }
 
 export function calculateMicrostructure(historyInput: MicrostructureHistoryPoint[]): MicrostructureResult | null {
-  const history = [...historyInput].sort((a, b) => a.observedAt - b.observedAt);
+  const latestAsset = historyInput.at(-1)?.quoteAsset ?? null;
+  const history = [...historyInput].filter((point) => (point.quoteAsset ?? null) === latestAsset).sort((a, b) => a.observedAt - b.observedAt);
   const current = history.at(-1);
   if (!current) return null;
   const yesSpreads = history.map((point) => calculateSpread(point.yes.bestBid, point.yes.bestAsk));
@@ -186,7 +192,7 @@ export function calculateMicrostructure(historyInput: MicrostructureHistoryPoint
   const events = current.activity;
   const fills = events.filter((item) => item.kind === "order_matched" && typeof item.size === "number" && typeof item.price === "number");
   return {
-    marketId: current.marketId,
+    marketId: current.marketId, quoteAsset: current.quoteAsset ?? null,
     timestamp: current.observedAt, source: current.source, provenance: current.provenance, historyObservationCount: persistedCount, dataStatus: current.dataStatus, historyStatus, yes, no,
     yesDepthChange, noDepthChange, totalDepthChange,
     orderChanges: { bidAdditions, bidRemovals, askAdditions, askRemovals }, liquidityTrend,
@@ -196,11 +202,13 @@ export function calculateMicrostructure(historyInput: MicrostructureHistoryPoint
 
 export function toMicrostructureHistory(snapshot: OrderBookSnapshot): MicrostructureHistoryPoint {
   const pick = (book: OutcomeOrderBook) => ({ bids: book.bids.map(({ price, size }) => ({ price, size })), asks: book.asks.map(({ price, size }) => ({ price, size })), bestBid: book.bestBid, bestAsk: book.bestAsk, bidDepth: book.bidDepth, askDepth: book.askDepth });
-  return { marketId: snapshot.marketId, observedAt: snapshot.observedAt, slot: snapshot.slot, source: snapshot.source, provenance: "current-live", dataStatus: snapshot.dataStatus === "partial" ? "partial" : "complete", yes: pick(snapshot.yes), no: pick(snapshot.no), pantaReference: snapshot.pantaReference, activity: snapshot.activity, activityStatus: snapshot.activityStatus };
+  return { marketId: snapshot.marketId, quoteAsset: snapshot.quoteAsset ?? null, activeVolume: snapshot.activeVolume, totalVolume: snapshot.totalVolume, observedAt: snapshot.observedAt, slot: snapshot.slot, source: snapshot.source, provenance: "current-live", dataStatus: snapshot.dataStatus === "partial" ? "partial" : "complete", yes: pick(snapshot.yes), no: pick(snapshot.no), pantaReference: snapshot.pantaReference, activity: snapshot.activity, activityStatus: snapshot.activityStatus };
 }
 
 export function explainOneSidedBook(book: OutcomeOrderBook, referencePrice: number | null): string | null {
-  if (book.bestBid !== null && book.bestAsk === null) return `The current decoder returned a one-sided ${book.outcome} book: a ${book.bestBid.toFixed(2)} USDC bid is present, but it returned no ask level. Panta's reference price is ${referencePrice === null ? "unavailable" : `${(referencePrice * 100).toFixed(0)}¢`}. Because there is no two-sided quote in the decoded snapshot, the ${book.bestBid.toFixed(2)} bid should not be treated as a reliable market probability.`;
-  if (book.bestAsk !== null && book.bestBid === null) return `The current decoder returned a one-sided ${book.outcome} book: an ask at ${book.bestAsk.toFixed(2)} USDC is present, but it returned no bid level. Panta's reference price is ${referencePrice === null ? "unavailable" : `${(referencePrice * 100).toFixed(0)}¢`}. Because there is no two-sided quote in the decoded snapshot, the ask should not be treated as a reliable market probability.`;
+  const asset = book.quoteAsset ?? "unresolved quote asset";
+  const reference = referencePrice === null ? "unavailable" : `${referencePrice.toFixed(4)} ${asset}/share`;
+  if (book.bestBid !== null && book.bestAsk === null) return `The current decoder returned a one-sided ${book.outcome} book: a ${book.bestBid.toFixed(4)} ${asset}/share bid is present, but it returned no ask level. Panta's separate reference price is ${reference}. Because there is no two-sided quote in the decoded snapshot, the bid should not be treated as a reliable market probability.`;
+  if (book.bestAsk !== null && book.bestBid === null) return `The current decoder returned a one-sided ${book.outcome} book: an ask at ${book.bestAsk.toFixed(4)} ${asset}/share is present, but it returned no bid level. Panta's separate reference price is ${reference}. Because there is no two-sided quote in the decoded snapshot, the ask should not be treated as a reliable market probability.`;
   return null;
 }

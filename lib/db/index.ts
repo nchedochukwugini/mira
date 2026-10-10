@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Pool, type QueryResultRow } from "pg";
-import type { Market, OrderBookSnapshot, OrderBookHistoryPoint } from "@/lib/panta/types";
+import type { Market, OrderBookSnapshot, OrderBookHistoryPoint, QuoteAsset } from "@/lib/panta/types";
 import type { ResearchReport } from "@/lib/research/types";
 import type { MicrostructureHistoryPoint } from "@/lib/panta/microstructure";
 
@@ -14,6 +14,36 @@ export function getPool() {
   if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") throw new Error("DATABASE_URL must use the PostgreSQL protocol.");
   pool ??= new Pool({ connectionString, max: 5, ssl: parsed.hostname.endsWith("neon.tech") ? { rejectUnauthorized: false } : undefined });
   return pool;
+}
+
+export async function getPersistedVerifiedFills(providerMarketId: string, limit = 1000) {
+  const boundedLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+  const { rows } = await getPool().query(`SELECT m.id AS market_id,s.event_pda,s.initial_scan_complete,s.unresolved_count,s.last_success_at,
+      f.signature,f.event_index,f.slot,f.block_time,f.outcome,f.price,f.share_quantity,f.decoder_version,
+      f.quote_asset_status,f.quote_mint,f.quote_symbol,f.quote_decimals,f.quote_network,f.quote_source,f.quote_asset_reason,
+      f.price_units,f.share_quantity_units,f.price_scale,f.share_quantity_scale,f.quote_notional,f.quote_notional_mint,f.quote_notional_status
+    FROM markets m JOIN panta_trade_scans s ON s.market_id=m.id
+    LEFT JOIN panta_matched_fills f ON f.market_id=m.id AND f.event_pda=s.event_pda AND f.verification_status='matched-event-verified'
+      AND (f.block_time >= now()-interval '90 days' OR f.block_time IS NULL)
+    WHERE m.provider='panta' AND m.provider_market_id=$1
+    ORDER BY f.block_time DESC NULLS LAST,f.slot DESC,f.signature DESC,f.event_index DESC LIMIT $2`, [providerMarketId, boundedLimit + 1]);
+  if (!rows.length) return null;
+  const first = rows[0]!;
+  const fills = rows.filter((row) => typeof row.signature === "string").map((row) => ({
+    marketId: String(row.market_id), eventPda: String(row.event_pda), signature: String(row.signature), eventIndex: Number(row.event_index), slot: Number(row.slot),
+    blockTime: row.block_time ? new Date(row.block_time as string | Date).toISOString() : null, outcome: row.outcome as "YES" | "NO", price: Number(row.price), shareQuantity: Number(row.share_quantity),
+    decoderVersion: String(row.decoder_version),
+    quoteAsset: { status: row.quote_asset_status as "verified" | "unknown" | "unsupported", mint: typeof row.quote_mint === "string" ? row.quote_mint : null,
+      symbol: typeof row.quote_symbol === "string" ? row.quote_symbol : null, decimals: row.quote_decimals === null ? null : Number(row.quote_decimals),
+      network: typeof row.quote_network === "string" ? row.quote_network : "unknown", source: typeof row.quote_source === "string" ? row.quote_source : "none",
+      reason: typeof row.quote_asset_reason === "string" ? row.quote_asset_reason : null },
+    priceUnits: row.price_units === null ? null : String(row.price_units), shareQuantityUnits: row.share_quantity_units === null ? null : String(row.share_quantity_units),
+    priceScale: row.price_scale === null ? null : String(row.price_scale), shareQuantityScale: row.share_quantity_scale === null ? null : String(row.share_quantity_scale),
+    quoteNotional: row.quote_notional_status === "calculated" && row.quote_notional_mint === row.quote_mint && row.quote_asset_status === "verified" && row.quote_notional !== null ? String(row.quote_notional) : null,
+    quoteNotionalStatus: row.quote_notional_status as "calculated" | "unavailable" | "unverified",
+  }));
+  return { marketId: String(first.market_id), eventPda: String(first.event_pda), lastScanAt: first.last_success_at ? new Date(first.last_success_at as string | Date).toISOString() : null, initialScanComplete: first.initial_scan_complete === true,
+    unresolvedCount: Number(first.unresolved_count ?? 0), truncated: fills.length > boundedLimit, fills: fills.slice(0, boundedLimit) };
 }
 
 const secretKey = /(?:api[_-]?key|secret|private[_-]?key|seed|mnemonic|password|credential|signing|authorization|access[_-]?token)/i;
@@ -112,7 +142,7 @@ export async function upsertMarket(market: Market) {
   const { rows } = await getPool().query(`INSERT INTO markets(provider,provider_market_id,title,description,status,categories,end_time,latest_yes_probability,latest_no_probability,latest_volume_usdc,raw_metadata)
     VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11::jsonb)
     ON CONFLICT(provider,provider_market_id) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,status=EXCLUDED.status,categories=EXCLUDED.categories,end_time=EXCLUDED.end_time,latest_yes_probability=EXCLUDED.latest_yes_probability,latest_no_probability=EXCLUDED.latest_no_probability,latest_volume_usdc=EXCLUDED.latest_volume_usdc,raw_metadata=EXCLUDED.raw_metadata,last_seen_at=now(),updated_at=now()
-    RETURNING id`, [provider, market.id, safeText(market.question), market.description ? safeText(market.description) : null, market.status, JSON.stringify(market.category ? [market.category] : []), endsAt, market.yesProbability, market.noProbability, market.volumeUsd, JSON.stringify(safeJson({ source: provider, providerUpdatedAt: market.updatedAt }))]);
+    RETURNING id`, [provider, market.id, safeText(market.question), market.description ? safeText(market.description) : null, market.status, JSON.stringify(market.category ? [market.category] : []), endsAt, market.yesProbability, market.noProbability, market.volumeUsd, JSON.stringify(safeJson({ source: provider, providerUpdatedAt: market.updatedAt, dataRetrievedAt: market.dataRetrievedAt, quoteAsset: market.quoteAsset, quoteAssetResolution: market.quoteAssetResolution, activeVolume: market.activeVolume, totalVolume: market.totalVolume, primaryPoolLiquidity: market.primaryPoolLiquidity, primaryPoolLiquidityStatus: market.primaryPoolLiquidityStatus, pantaPrices: market.pantaPrices, priceProvenance: market.priceProvenance }))]);
   return rows[0].id as string;
 }
 export async function persistMarketObservation(market: Market) {
@@ -126,7 +156,7 @@ export async function persistPantaClobSnapshot(input: { market: Market; snapshot
   const marketId = await upsertMarket(market);
   const yes = snapshot.yes;
   const no = snapshot.no;
-  const latest = await getPool().query(`SELECT raw_data->'yes' AS yes,raw_data->'no' AS no,raw_data->'pantaReference' AS panta_reference FROM market_snapshots
+  const latest = await getPool().query(`SELECT raw_data->'yes' AS yes,raw_data->'no' AS no,raw_data->'pantaReference' AS panta_reference,raw_data->>'quoteAsset' AS quote_asset FROM market_snapshots
     WHERE market_id=$1 AND data_source='mira_observed' ORDER BY captured_at DESC LIMIT 1`, [marketId]);
   const comparableBook = (book: Pick<typeof yes, "bestBid" | "bestAsk" | "bidDepth" | "askDepth" | "bids" | "asks">) => ({
     bestBid: book.bestBid, bestAsk: book.bestAsk, bidDepth: book.bidDepth, askDepth: book.askDepth,
@@ -136,27 +166,30 @@ export async function persistPantaClobSnapshot(input: { market: Market; snapshot
     const priorYes = latest.rows[0]!.yes as typeof yes | null;
     const priorNo = latest.rows[0]!.no as typeof no | null;
     const priorReference = latest.rows[0]!.panta_reference as typeof snapshot.pantaReference | null;
-    const sameReference = priorReference?.yesPrice === snapshot.pantaReference.yesPrice && priorReference?.noPrice === snapshot.pantaReference.noPrice;
+    const sameReference = priorReference?.yesPrice === snapshot.pantaReference.yesPrice && priorReference?.noPrice === snapshot.pantaReference.noPrice && latest.rows[0]!.quote_asset === (snapshot.quoteAsset ?? null);
     if (priorYes && priorNo && sameReference && JSON.stringify(comparableBook(priorYes)) === JSON.stringify(comparableBook(yes)) && JSON.stringify(comparableBook(priorNo)) === JSON.stringify(comparableBook(no))) return false;
   }
   const result = await getPool().query(`INSERT INTO market_snapshots(
       market_id,captured_at,yes_probability,no_probability,status,raw_data,data_source,solana_slot,order_book_status,
-      yes_best_bid,yes_best_ask,no_best_bid,no_best_ask,yes_bid_depth_usdc,yes_ask_depth_usdc,no_bid_depth_usdc,no_ask_depth_usdc
-    ) VALUES($1,to_timestamp($2 / 1000.0),$3,$4,$5,$6::jsonb,'mira_observed',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      yes_best_bid,yes_best_ask,no_best_bid,no_best_ask,yes_bid_depth_usdc,yes_ask_depth_usdc,no_bid_depth_usdc,no_ask_depth_usdc,
+      quote_asset,quote_asset_status,yes_bid_depth_quote,yes_ask_depth_quote,no_bid_depth_quote,no_ask_depth_quote
+    ) VALUES($1,to_timestamp($2 / 1000.0),$3,$4,$5,$6::jsonb,'mira_observed',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
     ON CONFLICT (market_id,solana_slot) WHERE data_source='mira_observed' AND solana_slot IS NOT NULL DO NOTHING`, [
     marketId, snapshot.observedAt, market.yesProbability, market.noProbability, market.status,
-    JSON.stringify({ source: snapshot.source, sourceLabel: snapshot.sourceLabel, observedAt: snapshot.observedAt, freshness: snapshot.freshness, yes, no, activity: snapshot.activity, activityStatus: snapshot.activityStatus, pantaReference: snapshot.pantaReference }),
-    snapshot.slot, snapshot.dataStatus, yes.bestBid, yes.bestAsk, no.bestBid, no.bestAsk, yes.bidDepth, yes.askDepth, no.bidDepth, no.askDepth,
+    JSON.stringify({ source: snapshot.source, sourceLabel: snapshot.sourceLabel, observedAt: snapshot.observedAt, retrievedAt: snapshot.retrievedAt, freshness: snapshot.freshness, quoteAsset: snapshot.quoteAsset, quoteAssetResolution: snapshot.quoteAssetResolution, accountAddresses: snapshot.accountAddresses, accountReadSlots: snapshot.accountReadSlots, primaryPoolLiquidity: snapshot.primaryPoolLiquidity, primaryPoolLiquidityUsd: snapshot.primaryPoolLiquidityUsd, primaryPoolLiquidityStatus: snapshot.primaryPoolLiquidityStatus, activeVolume: snapshot.activeVolume, totalVolume: snapshot.totalVolume, matchedTradeCount: snapshot.matchedTradeCount, yes, no, activity: snapshot.activity, activityStatus: snapshot.activityStatus, pantaReference: snapshot.pantaReference }),
+    snapshot.slot, snapshot.dataStatus, yes.bestBid, yes.bestAsk, no.bestBid, no.bestAsk,
+    snapshot.quoteAsset === "USDC" ? yes.bidDepth : null, snapshot.quoteAsset === "USDC" ? yes.askDepth : null, snapshot.quoteAsset === "USDC" ? no.bidDepth : null, snapshot.quoteAsset === "USDC" ? no.askDepth : null,
+    snapshot.quoteAsset ?? null, snapshot.quoteAssetResolution?.status ?? null, yes.bidDepth, yes.askDepth, no.bidDepth, no.askDepth,
   ]);
   return Boolean(result.rowCount);
 }
 
 export async function getPantaClobSnapshotHistory(providerMarketId: string, limit = 100): Promise<OrderBookHistoryPoint[]> {
-  const { rows } = await getPool().query(`SELECT captured_at,solana_slot,yes_best_bid,yes_best_ask,no_best_bid,no_best_ask
+  const { rows } = await getPool().query(`SELECT captured_at,solana_slot,yes_best_bid,yes_best_ask,no_best_bid,no_best_ask,raw_data->>'quoteAsset' AS quote_asset
     FROM market_snapshots s JOIN markets m ON m.id=s.market_id
     WHERE m.provider='panta' AND m.provider_market_id=$1 AND s.data_source='mira_observed' AND s.solana_slot IS NOT NULL
     ORDER BY s.captured_at DESC LIMIT $2`, [providerMarketId, Math.max(1, Math.min(500, limit))]);
-  return rows.map((row) => ({ observedAt: new Date(row.captured_at as string | Date).getTime(), slot: Number(row.solana_slot), yesBestBid: row.yes_best_bid === null ? null : Number(row.yes_best_bid), yesBestAsk: row.yes_best_ask === null ? null : Number(row.yes_best_ask), noBestBid: row.no_best_bid === null ? null : Number(row.no_best_bid), noBestAsk: row.no_best_ask === null ? null : Number(row.no_best_ask) }));
+  return rows.map((row) => ({ observedAt: new Date(row.captured_at as string | Date).getTime(), slot: Number(row.solana_slot), quoteAsset: row.quote_asset === "SOL" || row.quote_asset === "USDC" ? row.quote_asset : null, yesBestBid: row.yes_best_bid === null ? null : Number(row.yes_best_bid), yesBestAsk: row.yes_best_ask === null ? null : Number(row.yes_best_ask), noBestBid: row.no_best_bid === null ? null : Number(row.no_best_bid), noBestAsk: row.no_best_ask === null ? null : Number(row.no_best_ask) }));
 }
 
 export async function getPantaMicrostructureHistory(providerMarketId: string, options: { start?: number; end?: number; limit?: number } = {}): Promise<MicrostructureHistoryPoint[]> {
@@ -170,8 +203,12 @@ export async function getPantaMicrostructureHistory(providerMarketId: string, op
   return rows.map((row) => {
     const raw = row.raw_data as Record<string, unknown>;
     const activityState: MicrostructureHistoryPoint["activityStatus"] = raw.activityStatus === "complete" || raw.activityStatus === "partial" ? raw.activityStatus : "unavailable";
+    const quoteAsset: QuoteAsset | null = raw.quoteAsset === "SOL" ? "SOL" : raw.quoteAsset === "USDC" ? "USDC" : null;
     return {
       marketId: providerMarketId,
+      quoteAsset,
+      activeVolume: raw.activeVolume as MicrostructureHistoryPoint["activeVolume"],
+      totalVolume: raw.totalVolume as MicrostructureHistoryPoint["totalVolume"],
       observedAt: new Date(row.captured_at as string | Date).getTime(),
       slot: row.solana_slot === null ? null : Number(row.solana_slot),
       source: "panta-solana" as const,

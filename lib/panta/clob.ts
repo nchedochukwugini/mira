@@ -2,6 +2,7 @@ import "server-only";
 import { PublicKey } from "@solana/web3.js";
 import type { Market, OrderActivity, OrderBookSnapshot } from "@/lib/panta/types";
 import { getMarketProvider } from "@/lib/providers/market-provider";
+import { applyDecodedPantaEvent } from "@/lib/panta/event-data";
 import { getPantaClobSnapshotHistory, persistPantaClobSnapshot } from "@/lib/db";
 import { assertSolanaMainnet, createSolanaMainnetConnection, SolanaRpcConfigurationError } from "@/lib/solana/rpc";
 import {
@@ -28,20 +29,26 @@ const activityCache = new Map<string, { expiresAt: number; items: OrderActivity[
 const historyCache = new Map<string, { expiresAt: number; history: NonNullable<OrderBookSnapshot["history"]>; status: OrderBookSnapshot["historyStatus"] }>();
 
 function emptyBook(market: Market, observedAt: number, reason: string, message: string, status: "partial" | "unavailable" = "unavailable"): OrderBookSnapshot {
+  const prices = market.quoteAssetResolution && ["resolved", "conflict"].includes(market.quoteAssetResolution.status) ? market.pantaPrices : null;
   return {
     marketId: market.id,
     marketQuestion: market.question,
+    quoteAsset: market.quoteAsset ?? null,
+    quoteAssetResolution: market.quoteAssetResolution,
+    accountAddresses: { event: market.pantaEventPda ?? market.id, priceLevels: [], orderNodes: [], truncated: false },
+    programId: market.pantaProgramId ?? null,
     source: "panta-solana",
     sourceLabel: "Panta · Solana",
     observedAt,
+    retrievedAt: observedAt,
     slot: null,
     // Panta's observation timestamp is provider metadata. The snapshot's local
     // observedAt is separate and must not be substituted for a missing provider time.
-    pantaReference: { yesPrice: market.yesProbability ?? null, noPrice: market.noProbability ?? null, observedAt: market.updatedAt ?? null },
+    pantaReference: { yesPrice: prices?.yes ?? null, noPrice: prices?.no ?? null, observedAt: prices?.observedAt ?? null, kind: prices?.kind ?? "unknown", source: market.priceProvenance?.source ?? "panta" },
     dataStatus: status,
     freshness: "unavailable",
-    yes: makeEmptyOutcomeBook("YES"),
-    no: makeEmptyOutcomeBook("NO"),
+    yes: makeEmptyOutcomeBook("YES", market.quoteAsset ?? null),
+    no: makeEmptyOutcomeBook("NO", market.quoteAsset ?? null),
     activity: [],
     activityStatus: "unavailable",
     history: [],
@@ -127,9 +134,12 @@ async function readOrderBook(market: Market, now: number): Promise<OrderBookSnap
   if (!market.pantaProgramId || market.pantaProgramId !== PANTA_CLOB_PROGRAM_ID) {
     return emptyBook(market, now, "secondary_market_mapping_unavailable", "Panta did not provide the verified CLOB program mapping for this market.");
   }
+  if (!market.quoteAsset || !market.quoteAssetResolution || !["resolved", "conflict"].includes(market.quoteAssetResolution.status) || market.quoteAssetResolution.source !== "panta-event-registry") {
+    return emptyBook(market, now, "quote_asset_unresolved", "Panta’s authoritative event metadata did not resolve a supported quote asset for this market.");
+  }
 
   let event: PublicKey;
-  try { event = new PublicKey(market.id); }
+  try { event = new PublicKey(market.pantaEventPda ?? market.id); }
   catch { return emptyBook(market, now, "invalid_market_identifier", "Panta returned a market identifier that is not a Solana public key."); }
 
   let connection: ReturnType<typeof createSolanaMainnetConnection>;
@@ -155,6 +165,8 @@ async function readOrderBook(market: Market, now: number): Promise<OrderBookSnap
     if (!onchainEvent.isActive || !onchainEvent.isGraduated || onchainEvent.isResolved || onchainEvent.isCancelled) {
       return emptyBook(market, now, "market_not_active_secondary", "Panta’s on-chain Event flags do not confirm an open secondary market.");
     }
+    const eventObservedAt = new Date().toISOString();
+    const eventMarket = applyDecodedPantaEvent(market, onchainEvent, eventObservedAt, eventResponse.context.slot);
     const question = market.question === "Market title unavailable" ? onchainEvent.question : market.question;
     const levels = [];
     let partial = false;
@@ -173,18 +185,30 @@ async function readOrderBook(market: Market, now: number): Promise<OrderBookSnap
       if (!decoded || decoded.event !== event.toBase58()) { partial = true; continue; }
       nodes.set(decoded.address, decoded);
     }
-    const books = buildOutcomeBooks({ levels, nodes, maxNodesPerSide: 500 });
+    const books = buildOutcomeBooks({ levels, nodes, maxNodesPerSide: 500, quoteAsset: market.quoteAsset });
     partial ||= books.partial;
-    const activity = await recentActivity(connection, event);
     const observedAt = Date.now();
+    const activity = await recentActivity(connection, event);
     return {
       marketId: market.id,
       marketQuestion: question,
+      quoteAsset: market.quoteAsset,
+      quoteAssetResolution: market.quoteAssetResolution,
+      accountAddresses: { event: event.toBase58(), priceLevels: levels.slice(0, 32).map((level) => level.address), orderNodes: [...nodes.keys()].slice(0, 64), truncated: levels.length > 32 || nodes.size > 64 },
+      programId: PANTA_CLOB_PROGRAM_ID,
+      primaryPoolLiquidity: eventMarket.primaryPoolLiquidity,
+      primaryPoolLiquidityUsd: eventMarket.primaryPoolLiquidityUsd,
+      primaryPoolLiquidityStatus: eventMarket.primaryPoolLiquidityStatus,
+      activeVolume: eventMarket.activeVolume,
+      totalVolume: eventMarket.totalVolume,
+      matchedTradeCount: eventMarket.matchedTradeCount ?? null,
+      accountReadSlots: { priceLevels: levelResponse.context.slot, orderNodes: orderResponse.context.slot, event: eventResponse.context.slot },
       source: "panta-solana",
       sourceLabel: "Panta · Solana",
       observedAt,
+      retrievedAt: observedAt,
       slot,
-      pantaReference: { yesPrice: market.yesProbability ?? null, noPrice: market.noProbability ?? null, observedAt: market.updatedAt ?? null },
+      pantaReference: { yesPrice: market.pantaPrices?.yes ?? null, noPrice: market.pantaPrices?.no ?? null, observedAt: market.pantaPrices?.observedAt ?? null, kind: market.pantaPrices?.kind ?? "unknown", source: market.priceProvenance?.source ?? "panta" },
       dataStatus: partial ? "partial" : "complete",
       freshness: freshness(observedAt, now),
       yes: books.yes,

@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
   data_source text NOT NULL DEFAULT 'panta', solana_slot bigint, order_book_status text,
   yes_best_bid double precision, yes_best_ask double precision, no_best_bid double precision, no_best_ask double precision,
   yes_bid_depth_usdc double precision, yes_ask_depth_usdc double precision,
-  no_bid_depth_usdc double precision, no_ask_depth_usdc double precision
+  no_bid_depth_usdc double precision, no_ask_depth_usdc double precision,
+  quote_asset text, quote_asset_status text,
+  yes_bid_depth_quote double precision, yes_ask_depth_quote double precision,
+  no_bid_depth_quote double precision, no_ask_depth_quote double precision
 );
 CREATE TABLE IF NOT EXISTS research_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid REFERENCES conversations(id) ON DELETE SET NULL,
@@ -82,6 +85,40 @@ CREATE TABLE IF NOT EXISTS secondary_operations (
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS panta_trade_scans (
+  market_id uuid PRIMARY KEY REFERENCES markets(id) ON DELETE CASCADE,
+  event_pda text NOT NULL, newest_signature text, newest_slot bigint, backfill_signature text, initial_scan_complete boolean NOT NULL DEFAULT false,
+  last_success_at timestamptz, last_error text, unresolved_count integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS panta_pending_transactions (
+  signature text NOT NULL, market_id uuid NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  event_pda text NOT NULL, slot bigint NOT NULL, block_time timestamptz,
+  status text NOT NULL DEFAULT 'discovered', attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(), last_error text,
+  discovered_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(signature,market_id)
+);
+CREATE TABLE IF NOT EXISTS panta_matched_fills (
+  id bigserial PRIMARY KEY, market_id uuid NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  event_pda text NOT NULL, signature text NOT NULL, event_index integer NOT NULL,
+  slot bigint NOT NULL, block_time timestamptz, outcome text NOT NULL CHECK (outcome IN ('YES','NO')),
+  price double precision NOT NULL CHECK (price > 0 AND price <= 1),
+  share_quantity double precision NOT NULL CHECK (share_quantity > 0), usdc_value double precision,
+  quote_asset_status text NOT NULL DEFAULT 'unknown' CHECK (quote_asset_status IN ('verified','unknown','unsupported')),
+  quote_mint text, quote_symbol text, quote_decimals smallint CHECK (quote_decimals IS NULL OR (quote_decimals >= 0 AND quote_decimals <= 18)),
+  quote_network text, quote_source text, quote_asset_reason text,
+  price_units numeric(20,0), share_quantity_units numeric(20,0), price_scale numeric(20,0), share_quantity_scale numeric(20,0),
+  quote_notional numeric(50,15), quote_notional_mint text,
+  quote_notional_status text NOT NULL DEFAULT 'unavailable' CHECK (quote_notional_status IN ('calculated','unavailable','unverified')),
+  decoder_version text NOT NULL, verification_status text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(market_id,signature,event_index)
+);
+CREATE TABLE IF NOT EXISTS panta_market_alerts (
+  id bigserial PRIMARY KEY, market_id uuid NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  alert_key text NOT NULL, condition text NOT NULL, observed_at timestamptz NOT NULL DEFAULT now(),
+  evidence jsonb NOT NULL, source text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(market_id,alert_key)
+);
+
 CREATE INDEX IF NOT EXISTS conversations_updated_at_idx ON conversations(updated_at DESC);
 CREATE INDEX IF NOT EXISTS messages_conversation_created_idx ON messages(conversation_id,created_at);
 CREATE INDEX IF NOT EXISTS markets_provider_market_idx ON markets(provider,provider_market_id);
@@ -89,6 +126,9 @@ CREATE INDEX IF NOT EXISTS markets_last_seen_idx ON markets(last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS snapshots_market_captured_idx ON market_snapshots(market_id,captured_at DESC);
 CREATE INDEX IF NOT EXISTS market_clob_snapshots_idx ON market_snapshots(market_id,captured_at DESC) WHERE data_source='mira_observed';
 CREATE UNIQUE INDEX IF NOT EXISTS market_clob_snapshot_slot_idx ON market_snapshots(market_id,solana_slot) WHERE data_source='mira_observed' AND solana_slot IS NOT NULL;
+CREATE INDEX IF NOT EXISTS panta_pending_due_idx ON panta_pending_transactions(next_attempt_at,discovered_at) WHERE status IN ('discovered','unavailable','fetched');
+CREATE INDEX IF NOT EXISTS panta_fills_market_time_idx ON panta_matched_fills(market_id,block_time DESC,slot DESC,event_index DESC);
+CREATE INDEX IF NOT EXISTS panta_fills_quote_mint_time_idx ON panta_matched_fills(market_id,quote_mint,block_time DESC) WHERE quote_asset_status='verified';
 CREATE INDEX IF NOT EXISTS research_market_started_idx ON research_runs(market_id,started_at DESC);
 CREATE INDEX IF NOT EXISTS research_conversation_started_idx ON research_runs(conversation_id,started_at DESC);
 CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(content_hash);

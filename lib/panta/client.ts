@@ -1,14 +1,89 @@
 import "server-only";
-import type { Market, Position, TradeQuote } from "@/lib/panta/types";
+import type { Market, MarketPriceHistory, Position, QuoteAssetResolution, TradeQuote } from "@/lib/panta/types";
+import { applyDecodedPantaEvent, getPantaEventData } from "@/lib/panta/event-data";
 import { normalizePantaQuote } from "@/lib/panta/trade-data";
-import { normalizePantaMarket } from "@/lib/intelligence/core";
+import { normalizePantaMarket, normalizePrimaryPoolLiquidityUsd, normalizePrimaryPoolAmount, normalizeQuoteAsset } from "@/lib/intelligence/core";
 import { rankDiscoveredMarkets } from "@/lib/intelligence/market-suggestions";
+import { getPantaPriceHistory } from "@/lib/panta/price-history";
 
 const baseUrl = (process.env.PANTA_API_URL || process.env.PANTA_API_BASE_URL || "https://live-api.panta.market/api/v1").replace(/\/$/, "");
 const apiKey = process.env.PANTA_API_KEY;
 const MARKET_PAGE_SIZE = 50;
 const MAX_MARKET_PAGES = 100;
 const MAX_SECONDARY_DETAILS = 16;
+const OFFICIAL_EVENT_API = "https://production-api.balr.fun/api/v1/events";
+
+export function applyAuthoritativeQuoteMetadata(market: Market, metadata: unknown, observedAt = new Date().toISOString()): Market {
+  const row = object(metadata);
+  const pda = text(row.eventPda, row.event_pda, row.pda, row.address);
+  const marketUuid = text(row.id, row.eventId, row.event_id);
+  const matches = Boolean(pda && (marketUuid === market.id || pda === market.id || pda === market.pantaEventPda));
+  if (!matches) {
+    return { ...market, quoteAsset: null, quoteAssetResolution: { asset: null, status: "unresolved", source: "none", observedAt: null, rawAuthoritative: null, rawProvider: market.quoteAssetRaw ?? null, message: "Panta event metadata did not match the market PDA." }, yesProbability: null, noProbability: null, history: [], pantaPrices: { yes: null, no: null, quoteAsset: null, kind: market.priceProvenance?.kind ?? "unknown", observedAt: null }, primaryPoolLiquidityUsd: null, primaryPoolLiquidity: normalizePrimaryPoolAmount(market.primaryPoolLiquidity?.rawBaseUnits, null), activeVolume: { amount: null, asset: null, source: null, observedAt: null }, totalVolume: { amount: null, asset: null, source: null, observedAt: null }, volumeUsd: null, totalVolumeUsd: null };
+  }
+  const rawAuthoritative = text(row.quoteAsset, row.quote_asset);
+  const asset = normalizeQuoteAsset(rawAuthoritative);
+  const rawProvider = market.quoteAssetRaw ?? null;
+  const providerAsset = normalizeQuoteAsset(rawProvider);
+  const resolution: QuoteAssetResolution = {
+    asset,
+    status: !asset ? rawAuthoritative ? "unsupported" : "unresolved" : providerAsset && providerAsset !== asset ? "conflict" : "resolved",
+    source: "panta-event-registry",
+    observedAt,
+    rawAuthoritative,
+    rawProvider,
+    ...(!asset ? { message: "Panta event registry did not provide a supported quote asset." } : providerAsset && providerAsset !== asset ? { message: `Legacy market detail says ${providerAsset}; authoritative event metadata says ${asset}.` } : {}),
+  };
+  const retrievedAt = market.dataRetrievedAt ?? observedAt;
+  const normalizedPool = normalizePrimaryPoolAmount(market.primaryPoolLiquidity?.rawBaseUnits, asset);
+  // `primaryPoolLamports` is an explicitly SOL base-unit field. The legacy
+  // quote label can conflict without making this independently named raw
+  // measurement ambiguous; keep its SOL interpretation and preserve the
+  // conflict in quoteAssetResolution for diagnostics.
+  const pool = { ...normalizedPool, observedAt: market.primaryPoolLiquidity?.rawBaseUnits ? retrievedAt : null };
+  const activeRaw = market.volumeRaw?.active;
+  const totalRaw = market.volumeRaw?.total;
+  const activeAsset = market.volumeRaw?.activeSource?.toUpperCase();
+  const totalAsset = market.volumeRaw?.totalSource?.toUpperCase();
+  const parseQuoteAmount = (raw: string | number | null | undefined, taggedAsset: string | undefined) => {
+    if (!asset || taggedAsset !== asset || raw === null || raw === undefined || raw === "") return null;
+    const parsed = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  };
+  const active = parseQuoteAmount(activeRaw, activeAsset);
+  const total = parseQuoteAmount(totalRaw, totalAsset);
+  const conversion = market.usdConversion;
+  const conversionTime = conversion ? Date.parse(conversion.observedAt) : Number.NaN;
+  const conversionValid = Boolean(conversion && conversion.source.trim() && Number.isFinite(conversionTime) && conversionTime <= Date.now() && Date.now() - conversionTime <= 5 * 60_000 && conversion.usdPerQuote > 0 && Number.isFinite(conversion.usdPerQuote));
+  const poolUsd = asset === "USDC" && conversionValid && pool.amount !== null ? pool.amount * conversion!.usdPerQuote : null;
+  const activeUsdRaw = activeAsset === "USD" && activeRaw !== null && activeRaw !== undefined ? Number(activeRaw) : null;
+  const totalUsdRaw = totalAsset === "USD" && totalRaw !== null && totalRaw !== undefined ? Number(totalRaw) : null;
+  const hasConflict = resolution.status === "conflict";
+  const readRawPrice = (raw: string | number | null | undefined) => {
+    if (!asset || hasConflict || raw === null || raw === undefined || raw === "") return null;
+    const value = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  };
+  const yesPrice = asset === "USDC" && !hasConflict ? market.yesProbability : readRawPrice(market.rawPantaPrices?.yes);
+  const noPrice = asset === "USDC" && !hasConflict ? market.noProbability : readRawPrice(market.rawPantaPrices?.no);
+  return {
+    ...market,
+    pantaEventPda: pda,
+    quoteAsset: asset,
+    quoteAssetResolution: resolution,
+    primaryPoolLiquidity: pool,
+    primaryPoolLiquidityUsd: poolUsd ?? (asset === "USDC" && conversionValid ? normalizePrimaryPoolLiquidityUsd(pool.rawBaseUnits, asset, conversion!.usdPerQuote) : null),
+    activeVolume: { amount: active, asset: active === null ? null : asset, source: active === null ? null : market.volumeRaw?.activeSource ?? null, observedAt: active === null ? null : retrievedAt },
+    totalVolume: { amount: total, asset: total === null ? null : asset, source: total === null ? null : market.volumeRaw?.totalSource ?? null, observedAt: total === null ? null : retrievedAt },
+    yesProbability: asset === "USDC" && !hasConflict ? market.yesProbability : null,
+    noProbability: asset === "USDC" && !hasConflict ? market.noProbability : null,
+    pantaPrices: { yes: yesPrice, no: noPrice, quoteAsset: hasConflict ? null : asset, kind: market.priceProvenance?.kind ?? "unknown", observedAt: market.priceProvenance?.observedAt ?? null },
+    history: asset && !hasConflict ? market.history : [],
+    // Backwards-compatible USD aliases are populated only from validated USDC fields.
+    volumeUsd: activeUsdRaw !== null && Number.isFinite(activeUsdRaw) && activeUsdRaw >= 0 ? activeUsdRaw : active !== null && conversionValid ? active * conversion!.usdPerQuote : null,
+    totalVolumeUsd: totalUsdRaw !== null && Number.isFinite(totalUsdRaw) && totalUsdRaw >= 0 ? totalUsdRaw : total !== null && conversionValid ? total * conversion!.usdPerQuote : null,
+  };
+}
 
 export class PantaError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -88,7 +163,9 @@ export function mergeMarketCatalogQuotes(detail: Market, catalog: Market | undef
     yesProbability: mergeMeasuredValue(detail.yesProbability, catalog.yesProbability),
     noProbability: mergeMeasuredValue(detail.noProbability, catalog.noProbability),
     volumeUsd: mergeMeasuredValue(detail.volumeUsd, catalog.volumeUsd),
+    totalVolumeUsd: mergeMeasuredValue(detail.totalVolumeUsd, catalog.totalVolumeUsd),
     liquidityUsd: mergeMeasuredValue(detail.liquidityUsd, catalog.liquidityUsd),
+    primaryPoolLiquidityUsd: mergeMeasuredValue(detail.primaryPoolLiquidityUsd, catalog.primaryPoolLiquidityUsd),
     updatedAt: detail.updatedAt ?? catalog.updatedAt,
     history: detail.history.length ? detail.history : catalog.history,
     status: corroboratedActiveStatus ? "active" : detail.status,
@@ -101,7 +178,8 @@ export class PantaClient {
   readonly source = "panta" as const;
   readonly environment = apiKey?.startsWith("pk_test_") ? "test" as const : apiKey?.startsWith("pk_live_") ? "live" as const : "unknown" as const;
   private marketCatalog: { expiresAt: number; byId: Map<string, Market> } | null = null;
-  private secondaryDetailCache = new Map<string, { expiresAt: number; market: Market }>();
+  private marketDetailCache = new Map<string, { expiresAt: number; market: Market; kind: "secondary" | "primary-pool" | "fallback" }>();
+  private officialEventMetadata: { expiresAt: number; byPda: Map<string, Record<string, unknown>> } | null = null;
 
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -138,6 +216,30 @@ export class PantaClient {
     return parsed;
   }
 
+  private async getOfficialEventMetadata(): Promise<Map<string, Record<string, unknown>>> {
+    if (this.officialEventMetadata && this.officialEventMetadata.expiresAt > Date.now()) return this.officialEventMetadata.byPda;
+    const byPda = new Map<string, Record<string, unknown>>();
+    try {
+      const response = await fetch(OFFICIAL_EVENT_API, { cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new Error("Panta event registry unavailable");
+      const payload: unknown = await response.json();
+      for (const value of list(payload)) {
+        const row = object(value);
+        const pda = text(row.eventPda, row.event_pda, row.pda, row.address);
+        const id = text(row.id, row.eventId, row.event_id);
+        if (id) byPda.set(id, row);
+        if (pda) byPda.set(pda, row);
+      }
+    } catch { /* Missing authority is explicit and cached briefly to avoid retry bursts. */ }
+    this.officialEventMetadata = { byPda, expiresAt: Date.now() + 5_000 };
+    return byPda;
+  }
+
+  private async resolveMarketQuote(market: Market): Promise<Market> {
+    const rows = await this.getOfficialEventMetadata();
+    return applyAuthoritativeQuoteMetadata(market, rows.get(market.id) ?? null);
+  }
+
   async discoverMarkets(query?: string, signal?: AbortSignal): Promise<Market[]> {
     const rows: unknown[] = [];
     let cursor: string | null = null;
@@ -153,28 +255,58 @@ export class PantaClient {
       if (!result.nextCursor || result.nextCursor === cursor || result.items.length === 0) break;
       cursor = result.nextCursor;
     }
-    const catalog = [...new Map(rows.map(normalizePantaMarket).filter((market): market is Market => market !== null).map((market) => [market.id, market])).values()];
-    const catalogById = new Map(catalog.map((market) => [market.id, market]));
-    // Detail carries current secondary quotes and account metadata omitted by
-    // the catalog. Bound enrichment work; the detail route resolves any other
-    // explicitly selected market on demand.
-    const secondaryMarkets = catalog.filter((market) => market.phase === "secondary" && market.status === "active").slice(0, MAX_SECONDARY_DETAILS);
-    const resolvedSecondary = await Promise.all(secondaryMarkets.map(async (market) => {
-      const cached = this.secondaryDetailCache.get(market.id);
-      if (cached && cached.expiresAt > Date.now()) return mergeMarketCatalogQuotes(cached.market, market);
+    const catalogFetchedAt = new Date().toISOString();
+    const catalog = [...new Map(rows.map(normalizePantaMarket).filter((market): market is Market => market !== null).map((market) => [market.id, { ...market, dataRetrievedAt: catalogFetchedAt }])).values()];
+    const officialEvents = await this.getOfficialEventMetadata();
+    const trustedCatalog = catalog.map((market) => applyAuthoritativeQuoteMetadata(market, officialEvents.get(market.id) ?? null));
+    const catalogById = new Map(trustedCatalog.map((market) => [market.id, market]));
+    // Detail carries current secondary quotes and primary-pool metadata omitted
+    // by the catalog. Keep all list enrichment within the existing 16-detail cap.
+    const secondaryMarkets = trustedCatalog.filter((market) => market.phase === "secondary" && market.status === "active").slice(0, MAX_SECONDARY_DETAILS);
+    const secondaryIds = new Set(secondaryMarkets.map((market) => market.id));
+    const poolCandidates = (query?.trim() ? rankDiscoveredMarkets(query, trustedCatalog) : trustedCatalog)
+      .filter((market) => market.primaryPoolLiquidityUsd === null && !secondaryIds.has(market.id));
+    const detailMarkets = [...secondaryMarkets, ...poolCandidates.slice(0, Math.max(0, MAX_SECONDARY_DETAILS - secondaryMarkets.length))];
+    const resolvedDetails = await Promise.all(detailMarkets.map(async (market) => {
+      const cached = this.marketDetailCache.get(market.id);
+      if (cached && cached.expiresAt > Date.now()) {
+        if (cached.kind === "secondary") return applyAuthoritativeQuoteMetadata(mergeMarketCatalogQuotes(cached.market, market), officialEvents.get(market.id) ?? null);
+        if (cached.kind === "primary-pool") return applyAuthoritativeQuoteMetadata({ ...market, primaryPoolLiquidity: cached.market.primaryPoolLiquidity, volumeRaw: cached.market.volumeRaw, dataRetrievedAt: cached.market.dataRetrievedAt }, officialEvents.get(market.id) ?? null);
+        return market;
+      }
       try {
         const payload = await this.request(`/markets/${encodeURIComponent(market.id)}/`, signal ? { signal } : {});
         const detail = normalizePantaMarket(object(payload).data ?? payload);
-        if (!detail || detail.id !== market.id || detail.phase !== "secondary") return market;
-        const enriched = mergeMarketCatalogQuotes(detail, market);
-        this.secondaryDetailCache.set(market.id, { market: enriched, expiresAt: Date.now() + 5_000 });
+        if (!detail || detail.id !== market.id) {
+          this.marketDetailCache.set(market.id, { market, kind: "fallback", expiresAt: Date.now() + 5_000 });
+          return market;
+        }
+        // Secondary detail also supplies live book-phase metadata used by
+        // existing consumers. For primary/resolved cards, consume only the new
+        // pool snapshot so detail status and volume cannot change catalog semantics.
+        const timestampedDetail = { ...detail, dataRetrievedAt: new Date().toISOString() };
+        const merged = detail.phase === "secondary"
+          ? mergeMarketCatalogQuotes(timestampedDetail, market)
+          : { ...market, primaryPoolLiquidity: timestampedDetail.primaryPoolLiquidity, volumeRaw: timestampedDetail.volumeRaw, dataRetrievedAt: timestampedDetail.dataRetrievedAt };
+        const enriched = applyAuthoritativeQuoteMetadata(merged, officialEvents.get(market.id) ?? null);
+        this.marketDetailCache.set(market.id, { market: enriched, kind: detail.phase === "secondary" ? "secondary" : "primary-pool", expiresAt: Date.now() + 5_000 });
         return enriched;
       } catch (error) {
         if (signal?.aborted) throw error;
+        // Cache the catalog fallback too, so an unavailable detail endpoint
+        // does not trigger another burst on every discovery refresh.
+        this.marketDetailCache.set(market.id, { market, kind: "fallback", expiresAt: Date.now() + 5_000 });
         return market;
       }
     }));
-    resolvedSecondary.forEach((market) => catalogById.set(market.id, market));
+    const eventData = await getPantaEventData(resolvedDetails);
+    resolvedDetails.forEach((market) => {
+      const chain = eventData.get(market.id);
+      const enriched = chain ? applyDecodedPantaEvent(market, chain.event, chain.observedAt, chain.slot) : market;
+      catalogById.set(enriched.id, enriched);
+      const cached = this.marketDetailCache.get(enriched.id);
+      if (cached) this.marketDetailCache.set(enriched.id, { ...cached, market: enriched });
+    });
     const normalized = [...catalogById.values()];
     this.marketCatalog = { expiresAt: Date.now() + 5_000, byId: new Map(normalized.map((market) => [market.id, market])) };
     if (!query?.trim()) return normalized;
@@ -183,10 +315,13 @@ export class PantaClient {
 
   async getMarket(id: string, signal?: AbortSignal): Promise<Market | null> {
     const payload = await this.request(`/markets/${encodeURIComponent(id)}/`, signal ? { signal } : {});
-    const detail = normalizePantaMarket(object(payload).data ?? payload);
-    if (detail?.phase === "secondary") {
-      this.secondaryDetailCache.set(id, { market: detail, expiresAt: Date.now() + 5_000 });
-    }
+    const candidate = normalizePantaMarket(object(payload).data ?? payload);
+    const rawMarket = candidate?.id === id ? candidate : null;
+    const rawDetail = rawMarket ? { ...rawMarket, dataRetrievedAt: new Date().toISOString() } : null;
+    const quoteResolved = rawDetail ? await this.resolveMarketQuote(rawDetail) : null;
+    const chainData = quoteResolved ? (await getPantaEventData([quoteResolved])).get(id) : undefined;
+    const detail = quoteResolved ? chainData ? applyDecodedPantaEvent(quoteResolved, chainData.event, chainData.observedAt, chainData.slot) : quoteResolved : null;
+    if (detail) this.marketDetailCache.set(id, { market: detail, kind: detail.phase === "secondary" ? "secondary" : "primary-pool", expiresAt: Date.now() + 5_000 });
     const hasTitle = Boolean(detail?.question.trim()) && detail?.question !== "Market title unavailable";
     if (!detail || (detail.yesProbability !== null && detail.noProbability !== null && hasTitle && detail.status !== "unknown")) return detail;
     let catalog = this.marketCatalog;
@@ -199,6 +334,14 @@ export class PantaClient {
 
   async getMarketTrades(marketId: string): Promise<unknown[]> {
     return list(await this.request(`/markets/${encodeURIComponent(marketId)}/trades/`));
+  }
+
+  async getMarketHistory(marketId: string, range: string): Promise<MarketPriceHistory> {
+    const market = await this.getMarket(marketId);
+    if (!market) {
+      return { marketId, eventPda: null, range: range as MarketPriceHistory["range"], status: "error", observations: [], quoteAsset: null, source: "none", retrievedAt: new Date().toISOString(), signaturesRead: 0, transactionsRead: 0, latestSignatureSlot: null, latestSignatureBlockTime: null, signatureLimit: 36, coverage: "unknown", completeness: "unavailable", reason: "market-not-found", message: "Market history is unavailable because the market could not be resolved." };
+    }
+    return getPantaPriceHistory(market, range);
   }
 
   async getPositions(wallet: string): Promise<Position[]> {

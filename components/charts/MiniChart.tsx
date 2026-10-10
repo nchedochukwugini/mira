@@ -1,6 +1,6 @@
 import type { MarketPoint } from "@/lib/panta/types";
 
-export function MiniChart({ points, label, className = "" }: { points: MarketPoint[]; label: string; className?: string }) {
+export function MiniChart({ points, label, className = "", emptyLabel = "Price history unavailable" }: { points: MarketPoint[]; label: string; className?: string; emptyLabel?: string }) {
   const observations = points.flatMap((point) => {
     const value = point.yesProbability;
     const timestamp = Date.parse(point.timestamp);
@@ -9,7 +9,7 @@ export function MiniChart({ points, label, className = "" }: { points: MarketPoi
       : [];
   }).sort((left, right) => left.timestamp - right.timestamp);
 
-  if (!observations.length) return <div className={`chart-empty ${className}`}>Price history unavailable</div>;
+  if (!observations.length) return <div className={`chart-empty ${className}`}>{emptyLabel}</div>;
 
   const min = Math.max(0, Math.min(...observations.map(({ value }) => value)) - 0.035);
   const max = Math.min(1, Math.max(...observations.map(({ value }) => value)) + 0.035);

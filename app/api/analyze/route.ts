@@ -9,7 +9,7 @@ import { runResearch } from "@/lib/research";
 import { getSpotPrice } from "@/lib/markets/spot-price";
 import { calculateMovement, extractMarketIntent, rankMarkets, semanticRelevance } from "@/lib/intelligence/core";
 import { explainMarketReasoning, understandMessage } from "@/lib/ai";
-import { getConversation, getLatestMarketResearch, getPantaMicrostructureHistory, persistMarketObservation, persistResearch } from "@/lib/db";
+import { getConversation, getLatestMarketResearch, getPantaMicrostructureHistory, getPersistedVerifiedFills, persistMarketObservation, persistResearch } from "@/lib/db";
 import { buildMarketReasoning } from "@/lib/intelligence/market-reasoning";
 import { buildCrossMarketReport, mergeMarketHistory, mergeSnapshotObservation } from "@/lib/intelligence/cross-market";
 import { asksForMarketIntelligence, buildMarketIntelligenceContext, synthesizeMarketIntelligence } from "@/lib/intelligence/market-intelligence";
@@ -23,6 +23,7 @@ import { PantaError } from "@/lib/panta/client";
 import { compareVerifiedActivity } from "@/lib/intelligence/verified-activity";
 import { isTradeEligibleMarket, tradeIneligibilityReason } from "@/lib/panta/trade-safety";
 import { isUuid } from "@/lib/db/api-error";
+import { summarizePersistedFills } from "@/lib/intelligence/persisted-fills";
 
 export const dynamic = "force-dynamic";
 
@@ -39,14 +40,17 @@ async function assembleMarketIntelligence(input: { marketId: string; question: s
   }
   await persistMarketObservation(market).catch(() => undefined);
   input.onProgress?.("Checking the order book, saved observations, and research");
-  const [snapshotResult, historyResult, researchResult] = await Promise.allSettled([
+  const [snapshotResult, historyResult, researchResult, fillsResult] = await Promise.allSettled([
     market.source === "panta" ? getPantaOrderBookSnapshot(market.id) : Promise.resolve(null),
     market.source === "panta" ? getPantaMicrostructureHistory(market.id, { limit: 500 }) : Promise.resolve([]),
     input.researchReport ? Promise.resolve({ status: "available" as const, evidence: input.researchReport.evidence, researchedAt: input.researchReport.researchedAt }) : getLatestMarketResearch(market.id),
+    market.source === "panta" ? getPersistedVerifiedFills(market.id) : Promise.resolve(null),
   ]);
   const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : null;
   const history = historyResult.status === "fulfilled" ? historyResult.value : [];
   const persistedResearch = researchResult.status === "fulfilled" ? researchResult.value : { status: "unavailable" as const, evidence: [], researchedAt: null };
+  const savedFills = fillsResult.status === "fulfilled" ? fillsResult.value : null;
+  const persistedFills = savedFills ? summarizePersistedFills({ ...savedFills, unavailable: false }) : summarizePersistedFills({ marketId: market.id, fills: [], initialScanComplete: false, unresolvedCount: 0, unavailable: true });
   const evidence = input.researchReport?.evidence ?? persistedResearch.evidence;
   const researchStatus = researchResult.status === "rejected" ? "unavailable" as const : persistedResearch.status;
   const researchAt = input.researchReport?.researchedAt ?? persistedResearch.researchedAt ?? input.context.researchMemory?.researchedAt ?? evidence[0]?.retrievedAt ?? null;
@@ -79,7 +83,7 @@ async function assembleMarketIntelligence(input: { marketId: string; question: s
   const context = buildMarketIntelligenceContext({
     market, providerLabel: provider.source === "panta" ? provider.environment === "live" ? "Connected market data" : provider.environment === "test" ? "Panta · Test" : "Panta · Environment unknown" : "Demo data",
     snapshot, microstructure, history, reasoning, events: event, research: evidence, researchStatus, researchedAt: researchAt,
-    crossMarket, generatedAt,
+    crossMarket, persistedFills, generatedAt,
   });
   input.onProgress?.("Building and grounding the market intelligence explanation");
   return { market, intelligence: await synthesizeMarketIntelligence(context, /\bshould i buy\s+(?:yes|no)\b/i.test(input.question)) };
@@ -381,11 +385,15 @@ export async function POST(request: Request) {
       const rankings = rankMarkets(question, active, movements, extractMarketIntent(question)).sort((a, b) => b.relevanceScore - a.relevanceScore);
       const topRank = rankings[0];
       const top = topRank ? active.find((market) => market.id === topRank.marketId) : undefined;
-      const hasComparableSignal = active.some((market) => (market.volumeUsd ?? 0) > 0 || (market.liquidityUsd ?? 0) > 0) || movements.length > 0;
+      const hasComparableSignal = active.some((market) => (market.activeVolume?.amount ?? 0) > 0 || (market.volumeUsd ?? 0) > 0 || (market.liquidityUsd ?? 0) > 0) || movements.length > 0;
       if (!top || !hasComparableSignal) {
         return NextResponse.json({ intent: decision.intent, reply: "Panta confirms these markets are active, but the list doesn’t provide enough comparable activity or price-history data to say which is most interesting. That would be a judgment call, not evidence of value.", source: provider.source, environment: provider.environment ?? "unknown", aiMode });
       }
-      const basis = top.volumeUsd !== null ? `Panta reports ${top.volumeUsd} USDC in volume` : top.liquidityUsd !== null ? `Panta reports ${top.liquidityUsd} USDC in liquidity` : "Panta returned a measurable price-history signal";
+      const basis = top.activeVolume?.amount !== null && top.activeVolume?.amount !== undefined
+        ? `Panta reports ${top.activeVolume.amount} ${top.activeVolume.asset ?? "unresolved quote asset"} in active volume`
+        : top.volumeUsd !== null ? `Panta reports ${top.volumeUsd} USD in volume`
+          : top.liquidityUsd !== null ? `Panta reports ${top.liquidityUsd} USD in liquidity`
+            : "Panta returned a measurable price-history signal";
       const yes = top.yesProbability === null ? "unavailable" : `${(top.yesProbability * 100).toFixed(1)}%`;
       return NextResponse.json({ intent: decision.intent, market: top, reply: `Of the active markets we discussed, “${top.question}” stands out on the available activity data: ${basis}. Panta currently reports YES at ${yes}. That makes it the most notable by these provider signals, not a claim that it is profitable or mispriced.`, source: provider.source, environment: provider.environment ?? "unknown", aiMode });
     }

@@ -9,6 +9,7 @@ import type {
   MarketMovement,
   MarketSnapshot,
   RelatedMarket,
+  QuoteAsset,
 } from "@/lib/panta/types";
 
 const stopWords = new Set([
@@ -74,6 +75,35 @@ export function normalizeProbability(value: unknown): number | null {
   return normalized <= 1 ? normalized : null;
 }
 
+export function normalizePrimaryPoolLiquidityUsd(value: unknown, quoteAsset: unknown, usdPerQuote?: number | null): number | null {
+  if (typeof quoteAsset !== "string" || quoteAsset.trim().toLowerCase() !== "usdc" || typeof usdPerQuote !== "number" || !Number.isFinite(usdPerQuote) || usdPerQuote <= 0) return null;
+  let baseUnits: number;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    baseUnits = Number(value.trim());
+  } else if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    baseUnits = value;
+  } else {
+    return null;
+  }
+  return Number.isSafeInteger(baseUnits) && baseUnits >= 0 ? (baseUnits / 1_000_000) * usdPerQuote : null;
+}
+
+export function normalizeQuoteAsset(value: unknown): QuoteAsset | null {
+  if (typeof value !== "string") return null;
+  const asset = value.trim().toUpperCase();
+  return asset === "SOL" || asset === "USDC" ? asset : null;
+}
+
+export function normalizePrimaryPoolAmount(value: unknown, quoteAsset: QuoteAsset | null) {
+  const rawBaseUnits = typeof value === "string" && /^\d+$/.test(value.trim())
+    ? value.trim()
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  const baseUnitsPerUnit = quoteAsset === "SOL" ? 1_000_000_000 : quoteAsset === "USDC" ? 1_000_000 : null;
+  const amount = rawBaseUnits !== null && baseUnitsPerUnit !== null && Number.isSafeInteger(Number(rawBaseUnits))
+    ? Number(rawBaseUnits) / baseUnitsPerUnit : null;
+  return { amount, asset: quoteAsset, source: rawBaseUnits === null ? null : "panta-market-detail-primary-pool", observedAt: null, rawBaseUnits, baseUnitsPerUnit, state: amount === null ? "unavailable" as const : "finalized_snapshot" as const };
+}
+
 export function dataStatusForMarket(market: Market, now = Date.now()): DataStatus {
   if (market.source === "demo") return "demo";
   const hasProbabilities = market.yesProbability !== null && market.noProbability !== null;
@@ -134,6 +164,15 @@ export function normalizePantaMarket(value: unknown): Market | null {
   }).filter((point): point is NonNullable<typeof point> => point !== null);
   const updatedAt = normalizeTimestamp(row.updatedAt ?? row.updated_at ?? row.lastTradeAt ?? row.last_trade_at);
   const priceChange = finiteNumber(row.priceChange24h ?? row.price_change_24h);
+  const quoteAssetRaw = firstText(row.quoteAsset, row.quote_asset);
+  const quoteAsset = normalizeQuoteAsset(quoteAssetRaw);
+  const activeVolumeRaw = row.activeVolumeSol ?? row.active_volume_sol ?? row.activeVolumeUsdc ?? row.active_volume_usdc ?? row.volumeSol ?? row.volume_sol ?? row.volumeUsdc ?? row.volumeUSDC ?? row.volume_usdc ?? row.volumeUsd ?? row.volume_usd ?? null;
+  const totalVolumeRaw = row.totalVolumeSol ?? row.total_volume_sol ?? row.totalVolumeUsdc ?? row.total_volume_usdc ?? row.totalVolumeUsd ?? row.total_volume_usd ?? null;
+  const primaryPoolRaw = row.primaryPoolLamports ?? row.primary_pool_lamports;
+  const rawYesPrice = row.yesPrice ?? row.yes_price ?? row.yes_probability ?? null;
+  const rawNoPrice = row.noPrice ?? row.no_price ?? row.no_probability ?? null;
+  const rawPriceSource = firstText(row.priceSource, row.price_source)?.toLowerCase();
+  const priceKind = rawPriceSource === "secondary_last_trade" || rawPriceSource === "last_trade" ? "last_trade" as const : rawPriceSource === "best_bid" ? "best_bid" as const : rawPriceSource === "best_ask" ? "best_ask" as const : rawPriceSource === "spot" || rawPriceSource === "provider_spot" ? "provider_spot" as const : "unknown" as const;
 
   return {
     id,
@@ -143,9 +182,25 @@ export function normalizePantaMarket(value: unknown): Market | null {
     status,
     yesProbability,
     noProbability,
-    volumeUsd: finiteNumber(row.volumeUsdc ?? row.volumeUSDC ?? row.volume_usdc ?? row.volumeUsd ?? row.volume_usd ?? row.totalVolumeUsdc ?? row.total_volume_usdc ?? row.totalVolume ?? row.total_volume ?? row.volume),
+    // USD aliases are populated only for explicitly USD-denominated USDC data.
+    // Generic volume / totalVolume fields are quote amounts, never USD by default.
+    volumeUsd: null,
+    totalVolumeUsd: null,
     // The documented Panta catalog does not currently expose liquidity; absence remains null.
-    liquidityUsd: finiteNumber(row.liquidityUsdc ?? row.liquidityUSDC ?? row.liquidity_usdc ?? row.liquidityUsd ?? row.liquidity_usd ?? row.liquidity),
+    // The legacy provider's generic liquidity field has no verified metric/unit contract.
+    liquidityUsd: null,
+    primaryPoolLiquidityUsd: null,
+    quoteAsset: null,
+    quoteAssetRaw,
+    quoteAssetResolution: { asset: null, status: quoteAssetRaw && !quoteAsset ? "unsupported" : "unresolved", source: "none", observedAt: null, rawAuthoritative: null, rawProvider: quoteAssetRaw },
+    primaryPoolLiquidity: normalizePrimaryPoolAmount(primaryPoolRaw, null),
+    activeVolume: { amount: null, asset: null, source: null, observedAt: null },
+    totalVolume: { amount: null, asset: null, source: null, observedAt: null },
+    volumeRaw: { active: typeof activeVolumeRaw === "string" || typeof activeVolumeRaw === "number" ? activeVolumeRaw : null, total: typeof totalVolumeRaw === "string" || typeof totalVolumeRaw === "number" ? totalVolumeRaw : null, activeSource: activeVolumeRaw === null ? null : (row.activeVolumeSol !== undefined || row.active_volume_sol !== undefined || row.volumeSol !== undefined || row.volume_sol !== undefined ? "sol" : row.volumeUsd !== undefined || row.volume_usd !== undefined ? "usd" : "usdc"), totalSource: totalVolumeRaw === null ? null : (row.totalVolumeSol !== undefined || row.total_volume_sol !== undefined ? "sol" : row.totalVolumeUsd !== undefined || row.total_volume_usd !== undefined ? "usd" : "usdc") },
+    matchedTradeCount: finiteNumber(row.totalTrades ?? row.total_trades),
+    priceProvenance: { kind: priceKind, source: firstText(row.priceSource, row.price_source) ?? "panta-market-detail", observedAt: updatedAt },
+    pantaPrices: { yes: null, no: null, quoteAsset: null, kind: priceKind, observedAt: updatedAt },
+    rawPantaPrices: { yes: typeof rawYesPrice === "string" || typeof rawYesPrice === "number" ? rawYesPrice : null, no: typeof rawNoPrice === "string" || typeof rawNoPrice === "number" ? rawNoPrice : null },
     priceChange24h: priceChange,
     startAt,
     closeAt,
@@ -383,7 +438,17 @@ export function createSnapshot(market: Market, observedAt = new Date().toISOStri
     yesProbability: market.yesProbability,
     noProbability: market.noProbability,
     volumeUsd: market.volumeUsd,
+    totalVolumeUsd: market.totalVolumeUsd,
     liquidityUsd: market.liquidityUsd,
+    primaryPoolLiquidityUsd: market.primaryPoolLiquidityUsd,
+    quoteAsset: market.quoteAsset ?? null,
+    quoteAssetResolution: market.quoteAssetResolution,
+    activeVolume: market.activeVolume,
+    totalVolume: market.totalVolume,
+    primaryPoolLiquidity: market.primaryPoolLiquidity,
+    matchedTradeCount: market.matchedTradeCount ?? null,
+    pantaPrices: market.pantaPrices,
+    priceProvenance: market.priceProvenance,
     status: market.status,
     observedAt,
     providerUpdatedAt: market.updatedAt,

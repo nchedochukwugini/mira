@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { PublicKey, SystemProgram, type VersionedTransactionResponse } from "@solana/web3.js";
 import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana/rpc";
 import { decodePantaEvent, PANTA_CLOB_PROGRAM_ID } from "@/lib/panta/clob-layout";
+import { SOLANA_MAINNET_USDC_MINT } from "@/lib/panta/quote-asset";
 import { isRawWalletInstruction, validateExactInstructionList, type ContractInstruction, type InstructionAccountMeta, type RawWalletInstruction } from "@/lib/panta/instruction-contract";
 
 // Instruction discriminators, account order, flags, arguments, and PDA seeds
@@ -94,11 +95,11 @@ function decodeConfig(data: Buffer): { treasury: PublicKey; usdcMint: PublicKey;
 }
 
 /** Read the event and MarketConfig from the configured mainnet RPC. */
-export async function readPantaBuildContext(eventAddress: string): Promise<PantaBuildContext> {
+export async function readPantaBuildContext(eventAddress: string, rpc = createSolanaMainnetConnection()): Promise<PantaBuildContext> {
   const event = pubkey(eventAddress);
   const program = new PublicKey(PROGRAM_ID);
   const marketConfig = derivePda([Buffer.from("market_config")]);
-  const connection = createSolanaMainnetConnection();
+  const connection = rpc;
   await assertSolanaMainnet(connection);
   const response = await connection.getMultipleAccountsInfoAndContext([event, marketConfig], { commitment: "confirmed" });
   const [eventInfo, configInfo] = response.value;
@@ -108,7 +109,7 @@ export async function readPantaBuildContext(eventAddress: string): Promise<Panta
   if (!eventState) throw new Error("The Panta Event account does not match the published frontend layout.");
   const config = decodeConfig(configInfo.data);
   const mintInfo = await connection.getAccountInfoAndContext(config.usdcMint, { commitment: "confirmed", minContextSlot: response.context.slot });
-  if (!mintInfo.value || !mintInfo.value.owner.equals(new PublicKey(TOKEN_PROGRAM)) || mintInfo.value.data.length !== 82
+  if (!config.usdcMint.equals(new PublicKey(SOLANA_MAINNET_USDC_MINT)) || !mintInfo.value || !mintInfo.value.owner.equals(new PublicKey(TOKEN_PROGRAM)) || mintInfo.value.data.length !== 82
     || mintInfo.value.data[44] !== 6 || mintInfo.value.data[45] !== 1) {
     throw new Error("MarketConfig does not reference an initialized six-decimal SPL USDC mint.");
   }

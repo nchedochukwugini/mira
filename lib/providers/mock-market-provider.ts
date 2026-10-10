@@ -19,6 +19,10 @@ export class MockMarketProvider implements MarketProvider {
     return [];
   }
 
+  async getMarketHistory(marketId: string, range: string) {
+    return { marketId, eventPda: null, range, status: "unsupported" as const, observations: [], quoteAsset: null, source: "none" as const, retrievedAt: new Date().toISOString(), signaturesRead: 0, transactionsRead: 0, latestSignatureSlot: null, latestSignatureBlockTime: null, signatureLimit: 0, coverage: "unknown" as const, completeness: "unavailable" as const, reason: "demo-history-unsupported", message: "Historical Panta observations are not available in demo mode." };
+  }
+
   async getPositions(): Promise<Position[]> {
     return [];
   }

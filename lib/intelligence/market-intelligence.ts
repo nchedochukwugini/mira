@@ -5,24 +5,27 @@ import type { MarketReasoningSummary } from "./market-reasoning";
 import type { Market, OrderBookSnapshot } from "@/lib/panta/types";
 import type { MicrostructureHistoryPoint, MicrostructureResult } from "@/lib/panta/microstructure";
 import type { EventIntelligence, ResearchEvidence } from "@/lib/research/types";
+import type { PersistedFillEvidence } from "./persisted-fills";
 
 export type IntelligenceEvidenceCategory = "supports-reported-fact" | "provides-context" | "indicates-change" | "contradicts-another-source" | "adds-uncertainty" | "describes-market-activity" | "describes-event";
 export type MarketIntelligenceContext = {
   market: null | {
     id: string; question: string; category: string | null; status: Market["status"]; phase: string | null;
     startAt: null; closeAt: string | null; resolutionStatus: "unresolved" | "resolved" | "unknown";
-    yesPrice: number | null; noPrice: number | null; volumeUsd: number | null; liquidityUsd: number | null;
+    yesPrice: number | null; noPrice: number | null; volumeUsd: number | null; totalVolumeUsd: number | null; liquidityUsd: number | null; primaryPoolLiquidityUsd: number | null;
+    quoteAsset: Market["quoteAsset"]; quoteAssetResolution: Market["quoteAssetResolution"]; activeVolume: Market["activeVolume"]; totalVolume: Market["totalVolume"]; primaryPoolLiquidity: Market["primaryPoolLiquidity"];
     provider: "panta" | "demo"; providerLabel: string; providerUpdatedAt: string | null;
     dataCompleteness: "complete" | "partial" | "unavailable";
   };
   pricing: { observedAt: string | null; observations: Array<{ at: string; yesPrice: number | null; provenance: "Panta provider history" | "Panta current quote" }>; changes: MarketReasoningSummary["changes"]; historyStatus: "available" | "insufficient"; note: string };
   structure: null | {
     source: "Panta · Solana"; status: OrderBookSnapshot["dataStatus"]; freshness: OrderBookSnapshot["freshness"];
-    observedAt: string | null; slot: number | null; yes: MicrostructureResult["yes"] | null; no: MicrostructureResult["no"] | null;
+    observedAt: string | null; slot: number | null; quoteAsset: OrderBookSnapshot["quoteAsset"]; yes: MicrostructureResult["yes"] | null; no: MicrostructureResult["no"] | null;
     liquidityTrend: MicrostructureResult["liquidityTrend"] | null; depthChange: MicrostructureResult["totalDepthChange"] | null;
     orderChanges: MicrostructureResult["orderChanges"] | null; historyStatus: MicrostructureResult["historyStatus"] | OrderBookSnapshot["historyStatus"];
   };
   activity: { status: string; placements: number; cancellations: number; verifiedMatchedTrades: number; unknown: number; events: Array<{ kind: string; instruction: string; outcome?: string; observedAt: string | null; price?: number; size?: number }>; note: string };
+  persistedFills: PersistedFillEvidence;
   reasoning: null | { dataStatus: MarketReasoningSummary["dataStatus"]; evidenceQuality: MarketReasoningSummary["evidenceQuality"]; observationCount: number; comparisonObservationCount: number; signals: Array<{ kind: string; observed: string; interpretation: string; provenance: string }>; uncertainty: string[] };
   events: null | { title: string; status: EventIntelligence["event"]["status"]; summary: string; freshness: EventIntelligence["freshness"]; lastUpdatedAt: string; timeline: EventIntelligence["event"]["timeline"]; diff: EventIntelligence["diff"]; uncertainty: string[] };
   research: { status: "available" | "not-run" | "unavailable"; researchedAt: string | null; evidence: Array<ResearchEvidence & { category: IntelligenceEvidenceCategory }>; uncertainty: string[] };
@@ -34,7 +37,7 @@ export type MarketIntelligenceContext = {
   generatedAt: string;
 };
 
-export type MarketIntelligenceResult = { context: MarketIntelligenceContext; answer: string; explanationMode: "groq" | "deterministic"; evidenceReferences: Record<string, string> };
+export type MarketIntelligenceResult = { context: MarketIntelligenceContext; answer: string; explanationMode: "groq" | "deterministic"; evidenceReferences: Record<string, string>; evidenceIds?: string[] };
 
 type BuildInput = {
   market: Market | null;
@@ -49,6 +52,7 @@ type BuildInput = {
   researchedAt?: string | null;
   crossMarket?: CrossMarketReport | null;
   generatedAt?: string;
+  persistedFills?: PersistedFillEvidence | null;
 };
 
 const validTime = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
@@ -67,7 +71,10 @@ function evidenceCategory(item: ResearchEvidence, event: EventIntelligence | nul
 function emptyContext(input: BuildInput): MarketIntelligenceContext {
   const generatedAt = validTime(input.generatedAt) ?? new Date().toISOString();
   const rawEvidence = input.research ?? [];
-  const evidenceReferences = Object.fromEntries(rawEvidence.slice(0, 6).map((item, index) => [`E${index + 1}`, item.id]));
+  const evidenceReferences = Object.fromEntries([
+    ...rawEvidence.slice(0, 6).map((item, index) => [`E${index + 1}`, item.id]),
+    ...(input.persistedFills?.transactions ?? []).slice(0, 6).map((item, index) => [`F${index + 1}`, `${item.signature}:${item.eventIndex}`]),
+  ]);
   const evidence = rawEvidence.slice(0, 6).map((item, index) => ({
     ...item,
     id: `E${index + 1}`,
@@ -108,12 +115,14 @@ function emptyContext(input: BuildInput): MarketIntelligenceContext {
     pricing: { observedAt: null, observations: [], changes: [], historyStatus: "insufficient", note: "No current provider price is available." },
     structure: null,
     activity: { status: "unavailable", placements: 0, cancellations: 0, verifiedMatchedTrades: 0, unknown: 0, events: [], note: "No verified activity observation is available." },
+    persistedFills: input.persistedFills ?? { source: "persisted-verified-fills", marketId: "", eventPda: null, status: "unavailable", lastScanAt: null, freshnessStatus: "unavailable", observedFrom: null, observedTo: null, lastFillAt: null, verifiedFillCount: null, metrics: null, coverageStatus: "unavailable", limitations: ["Market details are unavailable, so persisted fill evidence could not be selected safely."], transactions: [] },
     reasoning: null, events: eventContext,
     research: { status: researchStatus, researchedAt: validTime(input.researchedAt), evidence, uncertainty: researchUncertainty },
     crossMarket: input.crossMarket ? { report: input.crossMarket, status: "available", uncertainty: input.crossMarket.overall.uncertainty.slice(0, 10) } : null,
     evidenceReferences, changes: [], uncertainty,
     dataQuality: { status: "unavailable", sources: [
       { name: "Panta", status: "unavailable", observedAt: null },
+      { name: "Persisted verified fills", status: input.persistedFills?.coverageStatus === "complete" ? "available" : input.persistedFills?.coverageStatus ?? "unavailable", observedAt: input.persistedFills?.lastFillAt ?? null },
       { name: "Persisted research", status: researchStatus === "available" && evidence.length ? "available" : researchStatus === "unavailable" ? "unavailable" : "partial", observedAt: validTime(input.researchedAt) },
       { name: "Related markets", status: input.crossMarket ? "available" : "partial", observedAt: input.crossMarket ? generatedAt : null },
     ] }, generatedAt,
@@ -139,7 +148,10 @@ export function buildMarketIntelligenceContext(input: BuildInput): MarketIntelli
   }
   const rawEvidence = input.research ?? [];
   const evidenceReferences = new Map(rawEvidence.slice(0, 6).map((item, index) => [item.id, `E${index + 1}`]));
-  const compactEvidenceReferences = Object.fromEntries([...evidenceReferences].map(([sourceId, compactId]) => [compactId, sourceId]));
+  const compactEvidenceReferences = Object.fromEntries([
+    ...[...evidenceReferences].map(([sourceId, compactId]) => [compactId, sourceId]),
+    ...(input.persistedFills?.transactions ?? []).slice(0, 6).map((item, index) => [`F${index + 1}`, `${item.signature}:${item.eventIndex}`]),
+  ]);
   const event = input.events ?? null;
   const evidence = rawEvidence.slice(0, 6).map((item) => ({
     ...item, id: evidenceReferences.get(item.id) ?? item.id, claim: compact(item.claim, 450), summary: compact(item.summary, 450), title: compact(item.title, 220),
@@ -165,6 +177,7 @@ export function buildMarketIntelligenceContext(input: BuildInput): MarketIntelli
   for (const item of input.crossMarket?.relatedMarkets ?? []) for (const note of item.uncertainty) uncertainties.add(note);
   for (const item of evidenceUncertainty) uncertainties.add(item);
   const activityItems = snapshot?.activity ?? [];
+  const persistedFills = input.persistedFills ?? { source: "persisted-verified-fills" as const, marketId: market.id, eventPda: null, status: "unavailable" as const, lastScanAt: null, freshnessStatus: "unavailable" as const, observedFrom: null, observedTo: null, lastFillAt: null, verifiedFillCount: null, metrics: null, coverageStatus: "unavailable" as const, limitations: ["Persisted verified-fill evidence is unavailable; other market evidence remains usable."], transactions: [] };
   const activity = {
     status: snapshot?.activityStatus ?? "unavailable",
     placements: activityItems.filter((item) => item.kind === "order_placed").length,
@@ -181,21 +194,23 @@ export function buildMarketIntelligenceContext(input: BuildInput): MarketIntelli
     sources: [
       { name: market.source === "panta" ? "Panta" : "Demo provider", status: market.source === "panta" ? "available" : "partial", observedAt: pantaObservationAt },
       { name: "Panta · Solana CLOB", status: !snapshot || snapshot.dataStatus === "unavailable" ? "unavailable" : snapshot.dataStatus === "partial" ? "partial" : "available", observedAt: observedBookAt },
+      { name: "Persisted verified fills", status: persistedFills.coverageStatus === "complete" ? "available" : persistedFills.coverageStatus, observedAt: persistedFills.lastFillAt },
       { name: "Persisted research", status: input.researchStatus === "available" && rawEvidence.length ? "available" : input.researchStatus === "unavailable" ? "unavailable" : "partial", observedAt: validTime(input.researchedAt) },
       { name: "Related markets", status: input.crossMarket ? "available" : "partial", observedAt: input.crossMarket ? generatedAt : null },
     ],
   };
   const marketChanges = changes.map((change) => ({ category: change.type === "price" ? "price" as const : "structure" as const, summary: `${change.outcome} ${change.type} changed from ${change.previousValue} to ${change.currentValue} across observed timestamps.`, observedAt: change.observedAt }));
-  const structureChanges = microstructure?.totalDepthChange && microstructure.totalDepthChange.change !== 0 ? [{ category: "structure" as const, summary: `Visible book depth changed by ${microstructure.totalDepthChange.change} USDC across persisted observations.`, observedAt: observedBookAt }] : [];
+  const structureChanges = microstructure?.totalDepthChange && microstructure.totalDepthChange.change !== 0 ? [{ category: "structure" as const, summary: `Visible book depth changed by ${microstructure.totalDepthChange.change.toFixed(4)} ${snapshot?.quoteAsset ?? "quote"} across persisted observations.`, observedAt: observedBookAt }] : [];
   const hasPriorBaseline = event?.diff.status === "material-change" || event?.diff.status === "minor-change" || event?.diff.status === "no-change";
   const researchChanges = event && hasPriorBaseline && event.diff.newEvidence.length ? [{ category: "research" as const, summary: `${event.diff.newEvidence.length} new evidence items are recorded relative to the retained prior sources.`, observedAt: validTime(input.researchedAt) }] : [];
   const eventChanges = event && hasPriorBaseline && event.diff.changedClaims.length ? [{ category: "event" as const, summary: `${event.diff.changedClaims.length} evidence-backed claims changed relative to prior research.`, observedAt: event.event.lastUpdatedAt }] : [];
   const relatedChanges = input.crossMarket?.relatedMarkets.flatMap((item) => item.movement.observations.length ? [{ category: "related-markets" as const, summary: `${item.market.question} has observed movement ${item.movement.status} within ${item.movement.timingAlignment.status} timing alignment.`, observedAt: item.movement.observations.at(-1)?.to ?? null }] : []) ?? [];
   const context: MarketIntelligenceContext = {
-    market: { id: market.id, question: compact(market.question, 500), category: market.category, status: market.status, phase: market.phase ?? null, startAt: null, closeAt: validTime(market.closeAt), resolutionStatus: market.status === "resolved" ? "resolved" : market.status === "active" || market.status === "closed" ? "unresolved" : "unknown", yesPrice: market.yesProbability, noPrice: market.noProbability, volumeUsd: market.volumeUsd, liquidityUsd: market.liquidityUsd, provider: market.source, providerLabel: input.providerLabel ?? (market.source === "panta" ? "Connected market data" : "Demo data"), providerUpdatedAt: pantaObservationAt, dataCompleteness: providerDataComplete ? "complete" : "partial" },
+    market: { id: market.id, question: compact(market.question, 500), category: market.category, status: market.status, phase: market.phase ?? null, startAt: null, closeAt: validTime(market.closeAt), resolutionStatus: market.status === "resolved" ? "resolved" : market.status === "active" || market.status === "closed" ? "unresolved" : "unknown", yesPrice: market.yesProbability, noPrice: market.noProbability, volumeUsd: market.volumeUsd, totalVolumeUsd: market.totalVolumeUsd, liquidityUsd: market.liquidityUsd, primaryPoolLiquidityUsd: market.primaryPoolLiquidityUsd, quoteAsset: market.quoteAsset ?? null, quoteAssetResolution: market.quoteAssetResolution, activeVolume: market.activeVolume, totalVolume: market.totalVolume, primaryPoolLiquidity: market.primaryPoolLiquidity, provider: market.source, providerLabel: input.providerLabel ?? (market.source === "panta" ? "Connected market data" : "Demo data"), providerUpdatedAt: pantaObservationAt, dataCompleteness: providerDataComplete ? "complete" : "partial" },
     pricing: { observedAt: pantaObservationAt, observations: priceObservations, changes, historyStatus: priceHistoryStatus, note: "Prices are venue-reported market prices, not MIRA outcome probabilities or forecasts." },
-    structure: snapshot ? { source: "Panta · Solana", status: snapshot.dataStatus, freshness: snapshot.freshness, observedAt: observedBookAt, slot: snapshot.slot, yes: microstructure?.yes ?? null, no: microstructure?.no ?? null, liquidityTrend: microstructure?.liquidityTrend ?? null, depthChange: microstructure?.totalDepthChange ?? null, orderChanges: microstructure?.orderChanges ?? null, historyStatus: microstructure?.historyStatus ?? snapshot.historyStatus } : null,
+    structure: snapshot ? { source: "Panta · Solana", status: snapshot.dataStatus, freshness: snapshot.freshness, observedAt: observedBookAt, slot: snapshot.slot, quoteAsset: snapshot.quoteAsset ?? null, yes: microstructure?.yes ?? null, no: microstructure?.no ?? null, liquidityTrend: microstructure?.liquidityTrend ?? null, depthChange: microstructure?.totalDepthChange ?? null, orderChanges: microstructure?.orderChanges ?? null, historyStatus: microstructure?.historyStatus ?? snapshot.historyStatus } : null,
     activity,
+    persistedFills,
     reasoning: reasoning ? { dataStatus: reasoning.dataStatus, evidenceQuality: reasoning.evidenceQuality, observationCount: reasoning.observationCount, comparisonObservationCount: reasoning.comparisonObservationCount, signals: reasoning.signals.slice(0, 12).map(({ kind, observed, interpretation, provenance }) => ({ kind, observed: compact(observed), interpretation: compact(interpretation), provenance })), uncertainty: reasoning.uncertainty.slice(0, 12) } : null,
     events: compactEvent,
     research: { status: input.researchStatus ?? "not-run", researchedAt: validTime(input.researchedAt), evidence, uncertainty: evidenceUncertainty },
@@ -221,14 +236,30 @@ export function buildDeterministicMarketIntelligence(context: MarketIntelligence
   }
   const market = context.market;
   lines.push(`${market.question} · ${market.status}${market.resolutionStatus === "resolved" ? " (historical context)" : ""}. Source: ${market.providerLabel}; data completeness: ${market.dataCompleteness}.`);
-  const formatPrice = (value: number | null) => value === null ? "unavailable" : `${(value * 100).toFixed(1)}¢`;
-  if (market.yesPrice !== null || market.noPrice !== null) lines.push(`Panta reports YES at ${formatPrice(market.yesPrice)} and NO at ${formatPrice(market.noPrice)}. These are market prices, not MIRA forecasts.`);
+  const fills = context.persistedFills;
+  if (fills.status === "unavailable") lines.push("Persisted verified fills are unavailable; the remaining valid market evidence is reported independently.");
+  else if (fills.verifiedFillCount === 0) lines.push(`No persisted verified fills were observed for this market${fills.coverageStatus === "complete" ? " in the completed recorded history" : " in the partial recorded sample"}. This does not establish that no trades occurred beyond that coverage.`);
+  else {
+    const groups = fills.metrics?.quoteAssetGroups?.map((group) => {
+      const identity = group.status === "verified" ? `${group.symbol ?? group.mint ?? "verified mint"}${group.mint ? ` (${group.mint})` : ""}` : `${group.status} quote-token identity`;
+      const notional = group.quoteNotional === null ? "quote notional unavailable" : `${group.quoteNotional} ${group.symbol ?? group.mint}`;
+      const change = group.firstToLastPriceChange !== null && group.priceObservationFrom && group.priceObservationTo ? `; first-to-last observed price change ${group.firstToLastPriceChange} from ${group.priceObservationFrom} to ${group.priceObservationTo}` : "";
+      return `${group.fillCount} fills, ${group.shareQuantity} shares, ${group.priceRange ? `observed prices ${group.priceRange.min}–${group.priceRange.max}` : "prices unavailable"}${change}, ${notional}; ${identity}${group.reason ? ` (${group.reason})` : ""}`;
+    }).join("; ");
+    const legacyMetrics = fills.metrics as typeof fills.metrics & { priceRange?: { min: number; max: number } | null };
+    const priceFallback = !groups && legacyMetrics?.priceRange ? ` Observed traded prices: ${legacyMetrics.priceRange.min}–${legacyMetrics.priceRange.max}; quote-asset denomination is unavailable.` : "";
+    lines.push(`${fills.verifiedFillCount} persisted verified fill(s) were observed${fills.observedFrom && fills.observedTo ? ` from ${fills.observedFrom} through ${fills.observedTo}` : "; exact timestamps are incomplete"}. Recorded shares: ${fills.metrics?.totalShares ?? "unavailable"}.${priceFallback} Quote-asset grouped activity: ${groups || "unavailable"}. Coverage: ${fills.coverageStatus}.`);
+  }
+  for (const limitation of fills.limitations) lines.push(`Verified-fill limitation: ${limitation}`);
+  const formatPrice = (value: number | null) => value === null ? "unavailable" : `${(value * 100).toFixed(1)}%`;
+  if (market.yesPrice !== null || market.noPrice !== null) lines.push(`Panta reports YES at ${formatPrice(market.yesPrice)} and NO at ${formatPrice(market.noPrice)} in verified USDC markets. These are provider prices, not MIRA forecasts.`);
   else lines.push("Panta returned no current YES or NO price.");
   if (context.structure) {
     const side = (name: "YES" | "NO", value: typeof context.structure.yes) => {
       if (!value) return `${name} structure metrics are unavailable.`;
-      const quote = `bid ${value.bestBid === null ? "unavailable" : `${(value.bestBid * 100).toFixed(1)}¢`}, ask ${value.bestAsk === null ? "unavailable" : `${(value.bestAsk * 100).toFixed(1)}¢`}`;
-      return `${name} book is ${value.bookState} (${quote}); visible depth is ${value.totalDepth.toFixed(2)} USDC${value.midpoint === null ? "" : `, calculated midpoint ${(value.midpoint * 100).toFixed(1)}¢`}.`;
+      const asset = context.structure!.quoteAsset ?? "unresolved quote asset";
+      const quote = `bid ${value.bestBid === null ? "unavailable" : `${value.bestBid.toFixed(4)} ${asset}/share`}, ask ${value.bestAsk === null ? "unavailable" : `${value.bestAsk.toFixed(4)} ${asset}/share`}`;
+      return `${name} book is ${value.bookState} (${quote}); visible bid/ask notional is ${value.totalDepth.toFixed(4)} ${asset}${value.midpoint === null ? "" : `, calculated midpoint ${value.midpoint.toFixed(4)} ${asset}/share`}.`;
     };
     lines.push(`Order book observed ${context.structure.observedAt}; status ${context.structure.status}, freshness ${context.structure.freshness}. ${side("YES", context.structure.yes)} ${side("NO", context.structure.no)} A midpoint is a quote calculation, not a matched price or probability.`);
   } else lines.push("The verified on-chain CLOB snapshot is unavailable; no order-book state is inferred.");
@@ -252,7 +283,7 @@ export function validateMarketIntelligenceExplanation(value: unknown, context: M
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.answer !== "string" || row.answer.trim().length < 60 || row.answer.length > 2400) return null;
-  if (!Array.isArray(row.evidenceIds) || row.evidenceIds.length > 6 || row.evidenceIds.some((id) => typeof id !== "string" || !context.research.evidence.some((evidence) => evidence.id === id))) return null;
+  if (!Array.isArray(row.evidenceIds) || row.evidenceIds.length > 6 || row.evidenceIds.some((id) => typeof id !== "string" || !(context.research.evidence.some((evidence) => evidence.id === id) || /^F[1-6]$/.test(id) && context.evidenceReferences[id]))) return null;
   if (context.research.evidence.length && row.evidenceIds.length === 0) return null;
   const answer = row.answer.trim();
   if (/\b(?:will win|will lose|guaranteed|certain to|likely to win|almost certain|should buy|recommend(?:s|ed)? buying|buy yes|buy no|sell yes|sell no|enter this trade)\b/i.test(answer)) return null;
@@ -260,7 +291,7 @@ export function validateMarketIntelligenceExplanation(value: unknown, context: M
   if (/\b\d+(?:\.\d+)?\b|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\b|\b20\d{2}-\d{2}-\d{2}\b/i.test(answer)) return null;
   const normalizedAnswer = answer.toLowerCase();
   if (/\b(?:moved|movement|increased|decreased|rose|fell|changed|change)\b/.test(normalizedAnswer) && context.changes.length === 0 && context.events?.diff.status !== "material-change" && context.events?.diff.status !== "minor-change") return null;
-  if (/\b(?:matched trade|matched fill|trade was verified)\b/i.test(answer) && context.activity.verifiedMatchedTrades === 0) return null;
+  if (/\b(?:matched trade|matched fill|trade was verified|verified fill)\b/i.test(answer) && context.activity.verifiedMatchedTrades === 0 && (context.persistedFills.verifiedFillCount ?? 0) === 0) return null;
   if (/\b(?:related market|related markets|compared market|other market)\b/i.test(answer) && !context.crossMarket?.report.relatedMarkets.length) return null;
   if (/\b(?:contradict|disagree|conflict)\w*\b/i.test(answer) && !context.events?.diff.contradictions.length) return null;
   const serialized = JSON.stringify(context).toLowerCase();
@@ -271,17 +302,18 @@ export function validateMarketIntelligenceExplanation(value: unknown, context: M
   return { answer, evidenceIds };
 }
 
-const explanationSchema = { type: "object", additionalProperties: false, properties: { answer: { type: "string" }, evidenceIds: { type: "array", maxItems: 6, items: { type: "string", enum: ["E1", "E2", "E3", "E4", "E5", "E6"] } } }, required: ["answer", "evidenceIds"] } as const;
+const explanationSchema = { type: "object", additionalProperties: false, properties: { answer: { type: "string" }, evidenceIds: { type: "array", maxItems: 6, items: { type: "string", enum: ["E1", "E2", "E3", "E4", "E5", "E6", "F1", "F2", "F3", "F4", "F5", "F6"] } } }, required: ["answer", "evidenceIds"] } as const;
 
 export async function synthesizeMarketIntelligence(context: MarketIntelligenceContext, asksForRecommendation = false, generate: typeof explainMarketIntelligenceJson = explainMarketIntelligenceJson): Promise<MarketIntelligenceResult> {
   const evidenceReferences = context.evidenceReferences;
   const fallback = buildDeterministicMarketIntelligence(context, asksForRecommendation);
-  if (!context.market || context.market.status === "resolved") return { context, answer: fallback, explanationMode: "deterministic", evidenceReferences };
+  if (!context.market || context.market.status === "resolved") return { context, answer: fallback, explanationMode: "deterministic", evidenceReferences, evidenceIds: [] };
   const bounded = {
     market: context.market,
     pricing: { ...context.pricing, observations: context.pricing.observations.slice(-8), changes: context.pricing.changes.slice(-8) },
     structure: context.structure,
     activity: { ...context.activity, events: context.activity.events.slice(0, 6) },
+    persistedFills: context.persistedFills,
     reasoning: context.reasoning ? { ...context.reasoning, signals: context.reasoning.signals.slice(0, 8), uncertainty: context.reasoning.uncertainty.slice(0, 8) } : null,
     events: context.events ? { ...context.events, timeline: context.events.timeline.slice(-8), diff: { ...context.events.diff, newEvidence: context.events.diff.newEvidence.slice(0, 6), changedClaims: context.events.diff.changedClaims.slice(0, 6), removedOrRetractedClaims: context.events.diff.removedOrRetractedClaims.slice(0, 6), contradictions: context.events.diff.contradictions.slice(0, 6) } } : null,
     research: { status: context.research.status, researchedAt: context.research.researchedAt, evidence: context.research.evidence.slice(0, 6) },
@@ -299,7 +331,7 @@ export async function synthesizeMarketIntelligence(context: MarketIntelligenceCo
   };
   const ids = new Set(context.research.evidence.slice(0, 6).map((item) => item.id));
   const result = await generate({ data: bounded, schema: explanationSchema, validate: (candidate) => validateMarketIntelligenceExplanation(candidate, { ...context, research: { ...context.research, evidence: context.research.evidence.filter((item) => ids.has(item.id)) } }) }).catch(() => null);
-  return result ? { context, answer: `${asksForRecommendation ? "I can’t recommend an outcome or trade. Here is what the available market data and evidence show.\n\n" : ""}${result.answer}`, explanationMode: "groq", evidenceReferences } : { context, answer: fallback, explanationMode: "deterministic", evidenceReferences };
+  return result ? { context, answer: `${asksForRecommendation ? "I can’t recommend an outcome or trade. Here is what the available market data and evidence show.\n\n" : ""}${result.answer}`, explanationMode: "groq", evidenceReferences, evidenceIds: result.evidenceIds } : { context, answer: fallback, explanationMode: "deterministic", evidenceReferences, evidenceIds: [] };
 }
 
 export function asksForMarketIntelligence(message: string): boolean {

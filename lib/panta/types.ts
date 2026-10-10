@@ -1,8 +1,46 @@
 export type MarketStatus = "active" | "closed" | "resolved" | "unknown";
+export type QuoteAsset = "SOL" | "USDC";
+export type QuoteAssetResolution = {
+  asset: QuoteAsset | null;
+  status: "resolved" | "conflict" | "unresolved" | "unsupported";
+  source: "panta-event-registry" | "on-chain-event" | "none";
+  observedAt: string | null;
+  rawAuthoritative: string | null;
+  rawProvider: string | null;
+  message?: string;
+};
+export type QuoteAmount = { amount: number | null; asset: QuoteAsset | null; source: string | null; observedAt: string | null; slot?: number | null };
 
 export type MarketPoint = {
   timestamp: string;
   yesProbability: number | null;
+  /** Present on verified on-chain fill observations; absent on legacy provider points. */
+  signature?: string;
+  slot?: number;
+  outcome?: "YES" | "NO";
+  source?: string;
+};
+
+export type PriceHistoryRange = "1h" | "6h" | "1d" | "7d" | "all";
+export type PriceHistoryStatus = "available" | "empty" | "unsupported" | "error" | "invalid";
+export type MarketPriceHistory = {
+  marketId: string;
+  eventPda: string | null;
+  range: string;
+  status: PriceHistoryStatus;
+  observations: MarketPoint[];
+  quoteAsset: QuoteAsset | null;
+  source: "panta-solana-order-matched" | "none";
+  retrievedAt: string;
+  signaturesRead: number;
+  transactionsRead: number;
+  latestSignatureSlot: number | null;
+  latestSignatureBlockTime: string | null;
+  signatureLimit: number;
+  coverage: "all-available" | "bounded-latest-sample" | "unknown";
+  completeness: "complete" | "partial" | "unavailable";
+  reason?: string;
+  message?: string;
 };
 
 export type Market = {
@@ -14,7 +52,29 @@ export type Market = {
   yesProbability: number | null;
   noProbability: number | null;
   volumeUsd: number | null;
+  totalVolumeUsd: number | null;
   liquidityUsd: number | null;
+  /** Compatibility USD field; only populated when an explicit verified USD conversion exists. */
+  primaryPoolLiquidityUsd: number | null;
+  /** Verified quote asset and source; legacy detail quoteAsset is retained only as rawProvider. */
+  quoteAsset?: QuoteAsset | null;
+  quoteAssetResolution?: QuoteAssetResolution;
+  /** Original provider asset value for diagnostics. */
+  quoteAssetRaw?: string | null;
+  /** Solana Event account address; distinct from Panta's UUID market id. */
+  pantaEventPda?: string | null;
+  dataRetrievedAt?: string | null;
+  primaryPoolLiquidity?: QuoteAmount & { rawBaseUnits: string | null; baseUnitsPerUnit: number | null; state: "finalized_snapshot" | "current" | "unavailable" };
+  primaryPoolLiquidityStatus?: "verified" | "conflict" | "unavailable";
+  usdConversion?: { usdPerQuote: number; source: string; observedAt: string } | null;
+  activeVolume?: QuoteAmount;
+  totalVolume?: QuoteAmount;
+  volumeRaw?: { active: string | number | null; total: string | number | null; activeSource: string | null; totalSource: string | null };
+  matchedTradeCount?: number | null;
+  /** Provider price fields with provenance; legacy yes/no probability fields remain compatibility values. */
+  priceProvenance?: { kind: "best_bid" | "best_ask" | "last_trade" | "provider_spot" | "unknown"; source: string; observedAt: string | null };
+  pantaPrices?: { yes: number | null; no: number | null; quoteAsset: QuoteAsset | null; kind: "best_bid" | "best_ask" | "last_trade" | "provider_spot" | "unknown"; observedAt: string | null };
+  rawPantaPrices?: { yes: string | number | null; no: string | number | null };
   priceChange24h: number | null;
   startAt?: string | null;
   closeAt: string | null;
@@ -31,35 +91,54 @@ export type Market = {
 };
 
 export type OrderBookLevel = {
-  /** USDC per share, normalized as a decimal (for example 0.63 or 1.00). */
+  /** Quote asset per share, normalized as a decimal (for example 0.63 or 1.00). */
   price: number;
   /** Remaining shares at this price. */
   size: number;
   side: "bid" | "ask";
+  quoteNotional?: number;
 };
 
 export type OutcomeOrderBook = {
   outcome: "YES" | "NO";
+  quoteAsset?: QuoteAsset | null;
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
+  bidOrderCount?: number;
+  askOrderCount?: number;
+  openOrderCount?: number;
   bestBid: number | null;
   bestAsk: number | null;
   midpoint: number | null;
   spread: number | null;
-  /** Visible price-times-size notional, denominated in USDC. */
+  /** Visible price-times-size notional, denominated in quoteAsset. */
   bidDepth: number;
-  /** Visible price-times-size notional, denominated in USDC. */
+  /** Visible price-times-size notional, denominated in quoteAsset. */
   askDepth: number;
+  bidDepthQuote?: number;
+  askDepthQuote?: number;
 };
 
 export type OrderBookSnapshot = {
   marketId: string;
   marketQuestion: string;
+  quoteAsset?: QuoteAsset | null;
+  quoteAssetResolution?: QuoteAssetResolution;
+  accountAddresses?: { event: string; priceLevels: string[]; orderNodes: string[]; truncated: boolean };
+  programId?: string | null;
+  primaryPoolLiquidity?: QuoteAmount & { rawBaseUnits: string | null; baseUnitsPerUnit: number | null; state: "finalized_snapshot" | "current" | "unavailable" };
+  primaryPoolLiquidityUsd?: number | null;
+  primaryPoolLiquidityStatus?: "verified" | "conflict" | "unavailable";
+  activeVolume?: QuoteAmount;
+  totalVolume?: QuoteAmount;
+  matchedTradeCount?: number | null;
+  accountReadSlots?: { priceLevels: number; orderNodes: number; event: number };
   source: "panta-solana";
   sourceLabel: "Panta · Solana";
   observedAt: number;
+  retrievedAt?: number;
   slot: number | null;
-  pantaReference: { yesPrice: number | null; noPrice: number | null; observedAt: string | null };
+  pantaReference: { yesPrice: number | null; noPrice: number | null; observedAt: string | null; kind?: "best_bid" | "best_ask" | "last_trade" | "provider_spot" | "unknown"; source?: string };
   dataStatus: "complete" | "partial" | "unavailable";
   freshness: "live" | "recent" | "stale" | "unavailable";
   yes: OutcomeOrderBook;
@@ -75,6 +154,7 @@ export type OrderBookSnapshot = {
 export type OrderBookHistoryPoint = {
   observedAt: number;
   slot: number;
+  quoteAsset?: QuoteAsset | null;
   yesBestBid: number | null;
   yesBestAsk: number | null;
   noBestBid: number | null;
@@ -115,7 +195,17 @@ export type MarketSnapshot = {
   yesProbability: number | null;
   noProbability: number | null;
   volumeUsd: number | null;
+  totalVolumeUsd: number | null;
   liquidityUsd: number | null;
+  primaryPoolLiquidityUsd: number | null;
+  quoteAsset?: QuoteAsset | null;
+  quoteAssetResolution?: QuoteAssetResolution;
+  activeVolume?: QuoteAmount;
+  totalVolume?: QuoteAmount;
+  primaryPoolLiquidity?: Market["primaryPoolLiquidity"];
+  matchedTradeCount?: number | null;
+  pantaPrices?: Market["pantaPrices"];
+  priceProvenance?: Market["priceProvenance"];
   status: MarketStatus;
   observedAt: string;
   providerUpdatedAt: string | null;
@@ -255,6 +345,7 @@ export type MarketProvider = {
   readonly environment?: "test" | "live" | "unknown";
   discoverMarkets(query?: string, signal?: AbortSignal): Promise<Market[]>;
   getMarket(id: string, signal?: AbortSignal): Promise<Market | null>;
+  getMarketHistory(id: string, range: string): Promise<MarketPriceHistory>;
   getMarketTrades(marketId: string): Promise<unknown[]>;
   getPositions(wallet: string): Promise<Position[]>;
   getQuote(input: {

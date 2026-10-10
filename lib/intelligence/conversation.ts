@@ -331,12 +331,20 @@ export function classifyConversationMessage(message: string, context: Conversati
 export function answerMarketDetail(message: string, market: Market): string {
   const text = clean(message);
   const resolved = market.status === "resolved";
+  const price = (outcome: "yes" | "no") => {
+    const value = market.pantaPrices?.[outcome];
+    const asset = market.pantaPrices?.quoteAsset;
+    if (value === null || value === undefined || !asset || market.quoteAssetResolution?.status === "conflict") return "unavailable";
+    if (asset === "USDC" && market.pantaPrices?.kind !== "last_trade") return `${(value * 100).toFixed(1)}% (${value.toFixed(4)} USDC/share)`;
+    return `${value.toFixed(4)} ${asset}/share`;
+  };
   if (/\b(probabilit(?:y|ies)|odds|price|quote|showing)\b/.test(text)) {
-    const yes = market.yesProbability === null ? "unavailable" : `$${market.yesProbability.toFixed(2)} per share`;
-    const no = market.noProbability === null ? "unavailable" : `$${market.noProbability.toFixed(2)} per share`;
+    const yes = price("yes");
+    const no = price("no");
     const timestamp = market.updatedAt ? ` Panta lists the quote update time as ${new Date(market.updatedAt).toLocaleString()}.` : " Panta did not provide a quote update timestamp.";
-    if (resolved) return `For resolved market “${market.question}”, Panta’s final reported quotes were YES ${yes} and NO ${no}. They are historical market values, not current prices or proof of an event’s likelihood.`;
-    return `For “${market.question}”, Panta reports YES at ${yes} and NO at ${no}. These are market prices, not proof of the event’s likelihood.${timestamp}`;
+    const label = market.priceProvenance?.kind === "last_trade" ? "last matched trade prices" : "prices";
+    if (resolved) return `For resolved market “${market.question}”, Panta’s final reported ${label} were YES ${yes} and NO ${no}. They are historical market values, not current prices or proof of an event’s likelihood.`;
+    return `For “${market.question}”, Panta reports YES ${yes} and NO ${no}${market.priceProvenance?.kind === "last_trade" ? " as last matched trades, not current executable quotes" : ""}. These are market prices, not proof of the event’s likelihood.${timestamp}`;
   }
   if (/\b(close|end|resolve|when)\b/.test(text)) {
     if (resolved) return market.closeAt ? `“${market.question}” is resolved. Panta lists ${new Date(market.closeAt).toLocaleString()} as its close time; this is historical timing, not a future close.` : `“${market.question}” is resolved, but Panta did not provide its close time.`;
@@ -345,9 +353,9 @@ export function answerMarketDetail(message: string, market: Market): string {
   const facts = [
     market.category ? `Category: ${market.category}` : null,
     `Status: ${market.status}`,
-    `${resolved ? "Final YES quote" : "YES quote"} ${market.yesProbability === null ? "unavailable" : `$${market.yesProbability.toFixed(2)} per share`}`,
-    `${resolved ? "Final NO quote" : "NO quote"} ${market.noProbability === null ? "unavailable" : `$${market.noProbability.toFixed(2)} per share`}`,
-    `${resolved ? "Reported historical volume" : "Volume"} ${market.volumeUsd === null ? "unavailable" : `${market.volumeUsd} USDC`}`,
+    `${resolved ? "Historical YES price" : market.priceProvenance?.kind === "last_trade" ? "Last matched YES trade" : "YES price"} ${price("yes")}`,
+    `${resolved ? "Historical NO price" : market.priceProvenance?.kind === "last_trade" ? "Last matched NO trade" : "NO price"} ${price("no")}`,
+    `${resolved ? "Reported historical volume" : "Active volume"} ${market.activeVolume?.amount === null || market.activeVolume?.amount === undefined || !market.activeVolume.asset ? "unavailable" : `${market.activeVolume.amount} ${market.activeVolume.asset}`}`,
     market.closeAt ? `${resolved ? "Historical close time" : "Closes"} ${new Date(market.closeAt).toLocaleString()}` : "Closing time unavailable",
     market.updatedAt ? `Provider quote updated ${new Date(market.updatedAt).toLocaleString()}` : "Provider quote update time unavailable",
   ].filter(Boolean);

@@ -26,6 +26,7 @@ export type MarketChange = {
 };
 export type MarketReasoningSummary = {
   marketId: string;
+  quoteAsset: Market["quoteAsset"];
   marketState: Market["status"];
   marketPriceContext: { yesPrice: number | null; noPrice: number | null; source: "panta"; observedAt: string | null };
   structure: { yes: MicrostructureResult["yes"] | null; no: MicrostructureResult["no"] | null };
@@ -70,7 +71,7 @@ export function buildMarketReasoning(input: ReasoningInput): MarketReasoningSumm
   const { market, snapshot, microstructure, research } = input;
   const allObservations = [...input.history];
   if (snapshot && snapshot.dataStatus !== "unavailable" && !allObservations.some((point) => (point.slot !== null && point.slot === snapshot.slot) || point.observedAt === snapshot.observedAt)) allObservations.push(toMicrostructureHistory(snapshot));
-  const usableHistory = allObservations.filter((point) => point.dataStatus !== "partial").sort((a, b) => a.observedAt - b.observedAt);
+  const usableHistory = allObservations.filter((point) => point.dataStatus !== "partial" && (point.quoteAsset ?? null) === (snapshot?.quoteAsset ?? market.quoteAsset ?? null)).sort((a, b) => a.observedAt - b.observedAt);
   const savedObservationCount = usableHistory.filter((point) => point.provenance === "MIRA-observed").length;
   const historyStatus = input.historyStatus ?? (input.history.length ? "available" : "not-observed");
   const changes: MarketChange[] = [];
@@ -104,13 +105,13 @@ export function buildMarketReasoning(input: ReasoningInput): MarketReasoningSumm
       signal({ kind: "PRICE_MOVEMENT", outcome: "YES", direction: up ? "YES_UP" : "YES_DOWN", observed: `Panta YES price changed ${(change.previousValue * 100).toFixed(1)}¢ → ${(change.currentValue * 100).toFixed(1)}¢ (${change.delta > 0 ? "+" : ""}${(change.delta * 100).toFixed(1)}¢).`, interpretation: "Provider-reported price movement; this describes market direction and does not establish a forecast.", classification: up ? "supports-yes" : "opposes-yes", provenance: "panta-market-history" });
     } else if (change.type === "spread") {
       const narrower = change.delta < 0;
-      signal({ kind: narrower ? "SPREAD_NARROWING" : "SPREAD_WIDENING", outcome: change.outcome, direction: narrower ? "NARROWER" : "WIDER", observed: `${change.outcome} spread changed ${(change.previousValue * 100).toFixed(2)}¢ → ${(change.currentValue * 100).toFixed(2)}¢.`, interpretation: `The displayed ${change.outcome} spread ${narrower ? "narrowed" : "widened"} across MIRA observations; this describes displayed liquidity only.`, classification: "neutral", provenance: "mira-observed-order-book" });
+      signal({ kind: narrower ? "SPREAD_NARROWING" : "SPREAD_WIDENING", outcome: change.outcome, direction: narrower ? "NARROWER" : "WIDER", observed: `${change.outcome} spread changed ${change.previousValue.toFixed(4)} → ${change.currentValue.toFixed(4)} ${snapshot?.quoteAsset ?? market.quoteAsset ?? "quote"}/share.`, interpretation: `The displayed ${change.outcome} spread ${narrower ? "narrowed" : "widened"} across MIRA observations; this describes displayed liquidity only.`, classification: "neutral", provenance: "mira-observed-order-book" });
     } else if (change.type === "bid-depth" || change.type === "ask-depth") {
       const bid = change.type === "bid-depth"; const increase = change.delta > 0;
       const kind: MarketSignalKind = bid ? increase ? "BID_LIQUIDITY_INCREASE" : "BID_LIQUIDITY_DECREASE" : increase ? "ASK_LIQUIDITY_INCREASE" : "ASK_LIQUIDITY_DECREASE";
       const direction = bid ? increase ? "BID_MORE" : "BID_LESS" : increase ? "ASK_MORE" : "ASK_LESS";
       const classification: MarketSignal["classification"] = bid ? (increase ? change.outcome === "YES" ? "supports-yes" : "supports-no" : change.outcome === "YES" ? "opposes-yes" : "opposes-no") : (increase ? change.outcome === "YES" ? "opposes-yes" : "opposes-no" : change.outcome === "YES" ? "supports-yes" : "supports-no");
-      signal({ kind, outcome: change.outcome, direction, observed: `${change.outcome} visible ${bid ? "bid" : "ask"} depth changed $${change.previousValue.toFixed(2)} → $${change.currentValue.toFixed(2)} USDC.`, interpretation: `${increase ? "More" : "Less"} visible ${bid ? "buy-side" : "sell-side"} liquidity was observed; displayed liquidity is not an outcome probability and its change alone does not prove an order event.`, classification, provenance: "mira-observed-order-book" });
+      signal({ kind, outcome: change.outcome, direction, observed: `${change.outcome} visible ${bid ? "bid" : "ask"} depth changed ${change.previousValue.toFixed(4)} → ${change.currentValue.toFixed(4)} ${snapshot?.quoteAsset ?? market.quoteAsset ?? "quote"}.`, interpretation: `${increase ? "More" : "Less"} visible ${bid ? "buy-side" : "sell-side"} quote notional was observed; it is not primary-pool liquidity and its change alone does not prove an order event.`, classification, provenance: "mira-observed-order-book" });
     }
   }
   for (const outcome of ["YES", "NO"] as const) {
@@ -134,7 +135,7 @@ export function buildMarketReasoning(input: ReasoningInput): MarketReasoningSumm
   for (const item of snapshot?.activity ?? []) {
     if (item.kind === "order_placed") signal({ kind: "ORDER_PLACEMENT", outcome: item.outcome ?? "MARKET", direction: "PLACEMENT", observed: `Verified placement instruction ${item.instruction} was observed${item.observedAt ? ` at ${new Date(item.observedAt).toISOString()}` : ""}.`, interpretation: "An order placement instruction does not prove the order remains open or was filled.", classification: "neutral", provenance: "solana-activity" });
     else if (item.kind === "order_cancelled") signal({ kind: "ORDER_CANCELLATION", outcome: item.outcome ?? "MARKET", direction: "CANCELLATION", observed: `Verified cancellation instruction ${item.instruction} was observed${item.observedAt ? ` at ${new Date(item.observedAt).toISOString()}` : ""}.`, interpretation: "A cancellation instruction is not a matched trade.", classification: "neutral", provenance: "solana-activity" });
-    else if (item.kind === "order_matched") signal({ kind: "VERIFIED_MATCHED_TRADE", outcome: item.outcome ?? "MARKET", direction: "MATCHED", observed: `A verified OrderMatched event was observed${item.size !== undefined && item.price !== undefined ? ` for ${item.size} shares at ${item.price} USDC/share` : ""}.`, interpretation: "Only the decoded matched event is counted as trade evidence.", classification: "neutral", provenance: "solana-activity" });
+    else if (item.kind === "order_matched") signal({ kind: "VERIFIED_MATCHED_TRADE", outcome: item.outcome ?? "MARKET", direction: "MATCHED", observed: `A verified OrderMatched event was observed${item.size !== undefined && item.price !== undefined ? ` for ${item.size} shares at ${item.price} ${snapshot?.quoteAsset ?? market.quoteAsset ?? "quote"}/share` : ""}.`, interpretation: "Only the decoded matched event is counted as trade evidence.", classification: "neutral", provenance: "solana-activity" });
   }
   for (const item of research) {
     const classification: MarketSignal["classification"] = item.direction === "supports-yes" ? "supports-yes" : item.direction === "supports-no" ? "supports-no" : "neutral";
@@ -168,5 +169,5 @@ export function buildMarketReasoning(input: ReasoningInput): MarketReasoningSumm
     : dataStatus === "insufficient"
       ? "There is not enough verified market data to describe current structure or establish a direction."
       : `Panta currently reports YES at ${yesPrice === null ? "unavailable" : `${(yesPrice * 100).toFixed(1)}¢`} and NO at ${noPrice === null ? "unavailable" : `${(noPrice * 100).toFixed(1)}¢`}. ${usableHistory.length < 2 ? "MIRA does not have enough complete order-book observations to establish a structural trend." : `MIRA compares ${savedObservationCount} saved observations with the latest snapshot; changes reflect these actual observations only.`}${uncertainty.length ? ` Uncertainty: ${uncertainty.join(" ")}` : ""}`;
-  return { marketId: market.id, marketState: market.status, marketPriceContext: { yesPrice, noPrice, source: "panta", observedAt: iso(market.updatedAt) }, structure: { yes: microstructure?.yes ?? null, no: microstructure?.no ?? null }, signals, supportingSignals, opposingSignals, changes, evidenceQuality, uncertainty, dataStatus, observationCount: savedObservationCount, comparisonObservationCount: usableHistory.length, historyStatus, researchStatus: input.researchStatus, explanation };
+  return { marketId: market.id, quoteAsset: market.quoteAsset ?? null, marketState: market.status, marketPriceContext: { yesPrice, noPrice, source: "panta", observedAt: iso(market.updatedAt) }, structure: { yes: microstructure?.yes ?? null, no: microstructure?.no ?? null }, signals, supportingSignals, opposingSignals, changes, evidenceQuality, uncertainty, dataStatus, observationCount: savedObservationCount, comparisonObservationCount: usableHistory.length, historyStatus, researchStatus: input.researchStatus, explanation };
 }
