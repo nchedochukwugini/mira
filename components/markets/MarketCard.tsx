@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import Image from "next/image";
 import type { Market } from "@/lib/panta/types";
 import { MiniChart } from "@/components/charts/MiniChart";
+import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { isSecondaryMarketCandidate, isSecondaryTradeEligibleMarket, isTradeEligibleMarket } from "@/lib/panta/trade-safety";
 
 function currency(value: number | null): string {
@@ -43,10 +44,10 @@ export function MarketCard({ market, onSelect, onTrade, isWatched, onWatch, inde
   return (
     <motion.article className={`market-card${titleUnavailable ? " market-card--incomplete" : ""}`} data-market-complete={!titleUnavailable} initial={{ opacity: 0, y: 9 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .28, delay: Math.min(index * .045, .24) }}>
       <div className="market-card__eyebrow"><span className="market-category"><span className={`market-category__dot category-${(market.category ?? "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} />{market.category ?? "Market"}</span><span className="market-phase-badge">{phaseLabel}</span>{market.source === "demo" ? <span className="market-source market-source--demo">DEMO</span> : pantaEnvironment === "live" ? null : <span className="market-source market-source--panta">{pantaLabel} · {completeness ? "COMPLETE" : "PARTIAL"}</span>}<span className={`market-status market-status--${market.status}`}>{market.status === "unknown" ? "STATUS N/A" : market.status.toUpperCase()}</span></div>
-      <button className="market-card__image" onClick={() => onSelect(market)} aria-label={titleUnavailable ? `Open incomplete Panta listing ${market.id}` : `Open ${market.question}`}>
+      <button className="market-card__image" onClick={() => onSelect(market)} aria-label={titleUnavailable ? "Open incomplete Panta listing" : `Open ${market.question}`}>
         {market.imageUrl ? <><Image src={market.imageUrl} alt="" fill sizes="(max-width: 700px) 100vw, 360px" unoptimized onError={(event) => { event.currentTarget.hidden = true; const fallback = event.currentTarget.nextElementSibling; if (fallback instanceof HTMLElement) fallback.hidden = false; }} /><span className="market-card__image-empty" hidden>{market.category ?? "Market"}<small>Image unavailable from Panta</small></span></> : <span className="market-card__image-empty">{market.category ?? "Market"}<small>Image unavailable from Panta</small></span>}
       </button>
-      {titleUnavailable ? <div className="market-card__title market-card__title--unavailable"><span>Market title unavailable</span><small>Panta returned no title · ID {market.id}</small></div> : <button className="market-card__title" onClick={() => onSelect(market)}>{market.question}<ExternalLink size={13} aria-hidden="true" /></button>}
+      {titleUnavailable ? <div className="market-card__title market-card__title--unavailable"><span>Market title unavailable</span><small>Panta returned no title</small><MarketIdControl marketId={market.id} /></div> : <button className="market-card__title" onClick={() => onSelect(market)}>{market.question}<ExternalLink size={13} aria-hidden="true" /></button>}
       <div className="market-card__pricing">
         <div className="market-card__outcomes">
           <div className="market-card__outcome-buttons">
@@ -67,7 +68,7 @@ export function MarketCard({ market, onSelect, onTrade, isWatched, onWatch, inde
         <div><span>HISTORY</span><b>{market.history.length ? `${market.history.length} provider points` : market.source === "panta" ? "Provider history unavailable" : "Unavailable"}</b></div>
         <div><span>CLOSES</span><b className="metric-close">{closeLabel(market.closeAt)}</b></div>
       </div>
-      <div className="market-card__footer"><span>{market.source === "panta" ? "Panta market data" : "Demo fixture"} · Updated {market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "time unavailable"}</span><button onClick={() => onSelect(market)}>Details <span>→</span></button></div>
+      <div className="market-card__footer"><span>{market.source === "panta" ? "Panta market data" : "Demo fixture"} · Updated {market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "time unavailable"}</span><MarketIdControl marketId={market.id} /><button onClick={() => onSelect(market)}>Details <span>→</span></button></div>
     </motion.article>
   );
 }

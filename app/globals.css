@@ -219,6 +219,18 @@
 .trade-ticket__heading{min-width:0;display:block}
 .secondary-ticket__topline{display:flex;align-items:center;gap:10px;margin-bottom:5px}
 .secondary-ticket__topline .wallet-connect,.secondary-ticket__topline .wallet-connected{height:30px;padding:0 9px;font-size:9px}
+.market-id-control{display:inline-flex;min-width:0;flex-direction:column;align-items:flex-start;gap:4px;vertical-align:middle}
+.market-id-control__toggle,.market-id-control__copy{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:23px;padding:0 7px;border:1px solid #dfe6d9;border-radius:6px;background:#fbfcf6;color:#657962;font-size:8px;font-weight:600;white-space:nowrap}
+.market-id-control .market-id-control__toggle,.market-id-control .market-id-control__copy{max-width:100%;padding:0 7px;border:1px solid #dfe6d9;border-radius:6px;background:#fbfcf6;color:#657962;font-size:8px;font-weight:600;text-align:center;white-space:nowrap}
+.market-id-control__toggle:hover,.market-id-control__copy:hover{border-color:#b6c8ac;background:#f1f6eb}
+.market-id-control__chevron{transition:transform .15s ease}.market-id-control__chevron.is-open{transform:rotate(180deg)}
+.market-id-control__value{display:flex;min-width:0;max-width:100%;align-items:center;gap:6px;padding:4px 5px;border:1px solid #e7ebdf;border-radius:6px;background:#fffef9}
+.market-id-control__value code{max-width:min(320px,68vw);overflow-wrap:anywhere;color:#61745c;font:7px/1.45 var(--mono);user-select:all}
+.market-id-control__copy{min-height:21px;padding:0 5px}
+.market-suggestion-row{display:flex;min-width:0;width:100%;align-items:center;gap:8px}
+.market-suggestion-row>button{flex:1;min-width:0}
+.home-market-strip__items .market-card{min-width:0}
+.home-market-strip__items .market-card__footer{flex-wrap:wrap;gap:7px}
 .trade-ticket__badges{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
 .trade-ticket__badges .panel-kicker{letter-spacing:.06em}
 .trade-ticket__status,.trade-ticket__cluster{display:inline-flex;align-items:center;min-height:16px;padding:2px 5px;border:1px solid #dce6d6;border-radius:4px;background:#f4f8ef;color:#61775c;font:600 7px/1.15 var(--mono);letter-spacing:.025em}

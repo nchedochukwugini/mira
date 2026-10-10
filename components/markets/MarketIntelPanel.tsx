@@ -8,6 +8,7 @@ import { PantaOrderBookPanel } from "@/components/markets/PantaOrderBookPanel";
 import { MarketReasoningPanel } from "@/components/markets/MarketReasoningPanel";
 import { RelatedMarketGraph } from "@/components/markets/RelatedMarketGraph";
 import { CrossMarketPanel } from "@/components/markets/CrossMarketPanel";
+import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { calculateMovement, dataStatusForMarket } from "@/lib/intelligence/core";
 
 const money = (value: number | null) => value === null || !Number.isFinite(value) ? "Data unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: value >= 1_000 ? "compact" : "standard", maximumFractionDigits: value >= 1_000 ? 2 : 0 }).format(value);
@@ -39,7 +40,7 @@ export function MarketIntelPanel({ market, markets, onSelect, onTrade, onAskMira
   return (
     <aside className="intel-panel">
       <div className="intel-panel__header"><span className="panel-kicker">MARKET INTELLIGENCE</span>{sourceLabel && <span className={`source-stamp ${isDemo ? "source-stamp--demo" : "source-stamp--live"}`}>{sourceLabel}</span>}</div>
-      <div className="intel-market-title"><span>{market.category ?? "Market"} · {phaseLabel}</span><h2>{market.question}</h2></div>
+      <div className="intel-market-title"><span>{market.category ?? "Market"} · {phaseLabel}</span><h2>{market.question}</h2><MarketIdControl marketId={market.id} /></div>
       <div className="intel-market-image">{market.imageUrl ? <Image src={market.imageUrl} alt={`Image for ${market.question}`} fill sizes="(max-width: 700px) 100vw, 420px" unoptimized onError={(event) => { event.currentTarget.hidden = true; const fallback = event.currentTarget.nextElementSibling; if (fallback instanceof HTMLElement) fallback.hidden = false; }} /> : null}<span hidden={Boolean(market.imageUrl)}>Image unavailable from Panta</span></div>
       {detailLoading && <div className="intel-detail-note" role="status">MIRA is gathering this market’s detail fields…</div>}
       {detailWarning && <div className="intel-detail-note intel-detail-note--warning" role="status">{detailWarning} Catalog values remain shown where available.</div>}

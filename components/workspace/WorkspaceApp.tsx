@@ -11,6 +11,7 @@ import type { ResearchMemory } from "@/lib/research/types";
 import type { MarketIntelligenceResult } from "@/lib/intelligence/market-intelligence";
 import { MarketIntelligenceView } from "@/components/markets/MarketIntelligenceView";
 import { MarketCard } from "@/components/markets/MarketCard";
+import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { MarketIntelPanel } from "@/components/markets/MarketIntelPanel";
 import { MiraInvestigation } from "@/components/mira/MiraInvestigation";
 import { MiraCharacter } from "@/components/mira/MiraCharacter";
@@ -617,7 +618,7 @@ export function WorkspaceApp({ providerMode: initialProviderMode, providerEnviro
     setMiraState(analysis ? analysis.confidence === "insufficient" ? "insufficient-data" : "explaining" : "greeting");
   }, [analysis]);
 
-  if (!workspaceOpen) return <HomeExperience mode={providerMode} environment={providerEnvironment} markets={marketStatus === "ready" ? markets : []} prompt={prompt} setPrompt={setPrompt} onSubmit={() => void analyze()} onWallet={onWallet} onOpenWorkspace={(nextView) => { setWorkspaceOpen(true); setView(nextView); }} state={miraState} />;
+  if (!workspaceOpen) return <HomeExperience mode={providerMode} environment={providerEnvironment} markets={marketStatus === "ready" ? markets : []} prompt={prompt} setPrompt={setPrompt} onSubmit={() => void analyze()} onWallet={onWallet} onOpenWorkspace={(nextView) => { setWorkspaceOpen(true); setView(nextView); }} onSelect={(market) => { setWorkspaceOpen(true); setView("markets"); void focusMarket(market); }} onTrade={(market, outcome) => { setWorkspaceOpen(true); setView("markets"); void openTrade(market, outcome); }} onWatch={toggleWatch} watched={watchedIds} state={miraState} />;
 
   return <main className="workspace-world min-h-screen">
     <DaylightWorld compact />
@@ -684,7 +685,7 @@ function AnalysisView({ turns, activeTurnId, thinking, step, error, storageWarni
         {turn.analysis && <AnalysisMessage result={turn.analysis} state={turnState} watched={watched} onSelect={onSelect} onTrade={onTrade} onWatch={onWatch} />}
         {turn.marketIntelligence && <MarketIntelligenceView result={turn.marketIntelligence} />}
         {turn.researchReport && <ResearchReportView report={turn.researchReport} />}
-        {turn.reply && <><div className="assistant-message"><span className="assistant-character"><MiraCharacter state={turnState} compact /></span><div className="assistant-message__body"><div className="assistant-label">MIRA</div><p>{turn.reply}</p>{turn.sourceLink && <a href={turn.sourceLink.url} target="_blank" rel="noreferrer">{turn.sourceLink.title} ↗</a>}{turn.tradeChoices?.length ? <ol className="trade-market-choices">{turn.tradeChoices.map((market, index) => <li key={market.id}><div><b>{market.question}</b><small>ID {market.id} · {market.status}{market.closeAt ? ` · closes ${new Date(market.closeAt).toLocaleString()}` : " · closing time unavailable"}</small></div><button type="button" onClick={() => submit(`The ${["first", "second", "third", "fourth", "fifth"][index]} one.`)}>Choose</button></li>)}</ol> : null}</div></div></>}
+        {turn.reply && <><div className="assistant-message"><span className="assistant-character"><MiraCharacter state={turnState} compact /></span><div className="assistant-message__body"><div className="assistant-label">MIRA</div><p>{turn.reply}</p>{turn.sourceLink && <a href={turn.sourceLink.url} target="_blank" rel="noreferrer">{turn.sourceLink.title} ↗</a>}{turn.tradeChoices?.length ? <ol className="trade-market-choices">{turn.tradeChoices.map((market, index) => <li key={market.id}><div><b>{market.question}</b><small>{market.status}{market.closeAt ? ` · closes ${new Date(market.closeAt).toLocaleString()}` : " · closing time unavailable"}</small><MarketIdControl marketId={market.id} /></div><button type="button" onClick={() => submit(`The ${["first", "second", "third", "fourth", "fifth"][index]} one.`)}>Choose</button></li>)}</ol> : null}</div></div></>}
         {turn.pending && isActive && (turn.requiresMarketData
           ? <motion.div className="mira-investigation-transition" initial={{ opacity: .9, y: 4 }} animate={{ opacity: 1, y: 0 }}><MiraInvestigation state={state} markets={markets} question={turn.userMessage} step={thinking ? step : undefined} pantaEnvironment={pantaEnvironment} /></motion.div>
           : <div className="assistant-message"><span className="assistant-character"><MiraCharacter state={state} compact /></span><div className="assistant-message__body"><div className="assistant-label">MIRA</div><p>{state === "thinking" ? "Let me think that through…" : "One moment…"}</p></div></div>)}
@@ -692,8 +693,8 @@ function AnalysisView({ turns, activeTurnId, thinking, step, error, storageWarni
     })}
     {storageWarning && <div className="analysis-storage-warning" role="status">{storageWarning}</div>}
     {error && <div className="analysis-error" role="alert"><CircleHelp size={17} /><div><b>Analysis could not reach the provider</b><p>{error}</p><button onClick={() => submit()}>Try again <ArrowRight size={13} /></button></div></div>}
-    {turns.at(-1)?.analysis?.confidence === "insufficient" && state === "insufficient-data" && suggestions.length > 0 && <div className="insufficient-followups"><span>EXPLORE THESE PROVIDER MARKETS:</span>{suggestions.map((market) => <button key={market.id} onClick={() => onSelect(market)}>{market.question} · {market.id}<ArrowRight size={12} /></button>)}</div>}
-    {turns.length === 0 && !thinking && !error && <div className="analysis-prompt-list"><span>{suggestions.length ? "MARKETS FROM THE PROVIDER CATALOG" : "NO MARKET SUGGESTIONS AVAILABLE"}</span>{suggestions.map((market) => <button key={market.id} onClick={() => onSelect(market)}>{market.question}<small>{market.id} · {market.status === "unknown" ? "status unavailable" : market.status}</small><ArrowRight size={13} /></button>)}</div>}
+    {turns.at(-1)?.analysis?.confidence === "insufficient" && state === "insufficient-data" && suggestions.length > 0 && <div className="insufficient-followups"><span>EXPLORE THESE PROVIDER MARKETS:</span>{suggestions.map((market) => <div className="market-suggestion-row" key={market.id}><button onClick={() => onSelect(market)}>{market.question}<ArrowRight size={12} /></button><MarketIdControl marketId={market.id} /></div>)}</div>}
+    {turns.length === 0 && !thinking && !error && <div className="analysis-prompt-list"><span>{suggestions.length ? "MARKETS FROM THE PROVIDER CATALOG" : "NO MARKET SUGGESTIONS AVAILABLE"}</span>{suggestions.map((market) => <div className="market-suggestion-row" key={market.id}><button onClick={() => onSelect(market)}>{market.question}<small>{market.status === "unknown" ? "status unavailable" : market.status}</small><ArrowRight size={13} /></button><MarketIdControl marketId={market.id} /></div>)}</div>}
     <div className="thread-composer"><Composer value={prompt} onChange={setPrompt} onSubmit={() => submit()} disabled={thinking} compact inputRef={inputRef} /><span><Command size={11} /> K focuses your prompt</span></div>
   </div>;
 }

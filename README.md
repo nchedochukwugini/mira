@@ -12,7 +12,7 @@ MIRA is designed to help users understand what a market is asking, what the avai
 
 ## Interface screenshots
 
-These screenshots were captured on 2026-10-10 after the homepage and live Panta market listings loaded. Market data and availability are point-in-time; some values in the selected market panel were unavailable. The quote panel shows a secondary order ticket before wallet connection. No quote was requested and no transaction was prepared or submitted.
+These screenshots were captured on 2026-10-10 after the homepage and live Panta market listings loaded. Market data and availability are point-in-time. The market panel shows a live Solana snapshot and Panta reference prices; the current decoder returned no bid or ask levels for this market. Market IDs stay hidden until expanded and can then be copied. The quote panel shows a secondary order ticket before wallet connection. No quote was requested and no transaction was prepared or submitted.
 
 ### Homepage
 

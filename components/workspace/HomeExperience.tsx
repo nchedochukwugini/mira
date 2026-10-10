@@ -7,11 +7,12 @@ import { MiraCharacter } from "@/components/mira/MiraCharacter";
 import type { MiraState } from "@/components/mira/miraStates";
 import { Composer } from "@/components/workspace/Composer";
 import { WalletButton } from "@/components/wallet/WalletButton";
+import { MarketCard } from "@/components/markets/MarketCard";
 import type { Market } from "@/lib/panta/types";
 import type { SolanaWallet } from "@/lib/wallet/types";
 import { rankMarketSuggestions } from "@/lib/intelligence/market-suggestions";
 
-export function HomeExperience({ mode, markets, prompt, setPrompt, onSubmit, onWallet, onOpenWorkspace, state }: {
+export function HomeExperience({ mode, environment = "unknown", markets, prompt, setPrompt, onSubmit, onWallet, onOpenWorkspace, onSelect, onTrade, onWatch, watched, state }: {
   mode: "demo" | "panta";
   environment?: "test" | "live" | "unknown";
   markets: Market[];
@@ -20,6 +21,10 @@ export function HomeExperience({ mode, markets, prompt, setPrompt, onSubmit, onW
   onSubmit: () => void;
   onWallet: (wallet: SolanaWallet | null) => void;
   onOpenWorkspace: (view: "markets" | "portfolio" | "watchlist") => void;
+  onSelect: (market: Market) => void;
+  onTrade: (market: Market, outcome: "YES" | "NO") => void;
+  onWatch: (market: Market) => void;
+  watched: Set<string>;
   state: MiraState;
 }) {
   const suggestions = rankMarketSuggestions(markets).slice(0, 3);
@@ -43,7 +48,7 @@ export function HomeExperience({ mode, markets, prompt, setPrompt, onSubmit, onW
     </section>
     <section className="home-market-strip" aria-label="Market examples from provider">
       <div className="home-market-strip__head"><div><span className="panel-kicker">A LOOK AT THE LANDSCAPE</span><h2>{markets.length ? "Markets in view" : "Markets will appear here"}</h2></div><button onClick={() => onOpenWorkspace("markets")}>Browse markets <ArrowRight size={14} /></button></div>
-      {suggestions.length ? <div className="home-market-strip__items">{suggestions.map((market) => <button key={market.id} className="home-market-peek" onClick={() => onOpenWorkspace("markets")}><span>{market.category ?? "Market"} · {market.phase?.replace(/[_-]+/g, " ").toUpperCase() ?? "PHASE UNAVAILABLE"} · {market.status}</span><b>{market.question}</b><small>ID {market.id} · YES {market.yesProbability === null ? "—" : `${Math.round(market.yesProbability * 100)}%`} <i /> NO {market.noProbability === null ? "—" : `${Math.round(market.noProbability * 100)}%`}</small></button>)}</div> : <p className="home-market-strip__empty">No live Panta markets are currently within their trading windows.</p>}
+      {suggestions.length ? <div className="home-market-strip__items">{suggestions.map((market, index) => <MarketCard key={market.id} market={market} index={index} pantaEnvironment={environment} isWatched={watched.has(market.id)} onWatch={onWatch} onSelect={(selected) => { onOpenWorkspace("markets"); onSelect(selected); }} onTrade={(selected, outcome) => { onOpenWorkspace("markets"); onTrade(selected, outcome); }} />)}</div> : <p className="home-market-strip__empty">No live Panta markets are currently within their trading windows.</p>}
       {mode === "demo" && <div className="home-market-strip__stamp">DEMO PROVIDER · NUMBERS ARE ILLUSTRATIVE</div>}
     </section>
     <footer className="home-footer"><span>© MIRA · MARKET INTELLIGENCE</span><span>BUILT TO HELP YOU SEE THE WHOLE PICTURE <Leaf size={12} /></span>{mode === "demo" && <span>DEMO ENVIRONMENT</span>}</footer>
