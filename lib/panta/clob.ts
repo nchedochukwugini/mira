@@ -25,6 +25,7 @@ const ACTIVITY_LIMIT = 6;
 const cache = new Map<string, OrderBookSnapshot>();
 const inFlight = new Map<string, Promise<OrderBookSnapshot>>();
 const persistedAt = new Map<string, number>();
+const persistenceFailures = new Map<string, { attempts: number; retryAt: number }>();
 const activityCache = new Map<string, { expiresAt: number; items: OrderActivity[]; partial: boolean }>();
 const historyCache = new Map<string, { expiresAt: number; history: NonNullable<OrderBookSnapshot["history"]>; status: OrderBookSnapshot["historyStatus"] }>();
 
@@ -225,6 +226,17 @@ async function readOrderBook(market: Market, now: number): Promise<OrderBookSnap
   }
 }
 
+async function readOrderBookWithRetry(market: Market, now: number) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const snapshot = await readOrderBook(market, now);
+    if (snapshot.reason !== "solana_rpc_unavailable" || attempt === 3) return snapshot;
+    const retryInMs = 250 * 2 ** (attempt - 1);
+    console.warn(JSON.stringify({ at: new Date().toISOString(), service: "mira-market-snapshots", event: "rpc_read_retry", marketId: market.id, retry: attempt, retryInMs }));
+    await new Promise((resolve) => setTimeout(resolve, retryInMs));
+  }
+  return emptyBook(market, now, "solana_rpc_unavailable", "MIRA couldn’t reach the Solana market-data source.");
+}
+
 export async function getPantaOrderBookSnapshot(marketId: string, now = Date.now()): Promise<OrderBookSnapshot> {
   const cached = cache.get(marketId);
   if (cached && now - cached.observedAt < CACHE_MS) return { ...cached, freshness: freshness(cached.observedAt, now) };
@@ -249,12 +261,23 @@ export async function getPantaOrderBookSnapshot(marketId: string, now = Date.now
       cache.set(marketId, unavailable);
       return unavailable;
     }
-    const snapshot = await readOrderBook(market, now);
+    const snapshot = await readOrderBookWithRetry(market, now);
     cache.set(marketId, snapshot);
-    if (snapshot.dataStatus !== "unavailable" && snapshot.slot !== null && now - (persistedAt.get(marketId) ?? 0) >= 30_000) {
-      try { await persistPantaClobSnapshot({ market, snapshot }); }
-      catch { /* Snapshot persistence failure does not hide the verified live RPC response. */ }
-      finally { persistedAt.set(marketId, now); }
+    const persistenceFailure = persistenceFailures.get(marketId);
+    if (snapshot.dataStatus !== "unavailable" && snapshot.slot !== null
+      && now - (persistedAt.get(marketId) ?? 0) >= 30_000
+      && (!persistenceFailure || now >= persistenceFailure.retryAt)) {
+      try {
+        await persistPantaClobSnapshot({ market, snapshot });
+        persistedAt.set(marketId, now);
+        persistenceFailures.delete(marketId);
+      } catch (error) {
+        const attempts = Math.min((persistenceFailure?.attempts ?? 0) + 1, 7);
+        const retryInMs = Math.min(300_000, 5_000 * 2 ** (attempts - 1));
+        persistenceFailures.set(marketId, { attempts, retryAt: now + retryInMs });
+        const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+        console.error(JSON.stringify({ at: new Date().toISOString(), service: "mira-market-snapshots", event: "snapshot_persist_error", marketId, retry: attempts, retryInMs, code }));
+      }
     }
     if (snapshot.dataStatus !== "unavailable") {
       const cachedHistory = historyCache.get(marketId);
@@ -279,4 +302,4 @@ export async function getPantaOrderBookSnapshot(marketId: string, now = Date.now
   finally { inFlight.delete(marketId); }
 }
 
-export function clearPantaOrderBookCacheForTests() { cache.clear(); inFlight.clear(); persistedAt.clear(); activityCache.clear(); historyCache.clear(); }
+export function clearPantaOrderBookCacheForTests() { cache.clear(); inFlight.clear(); persistedAt.clear(); persistenceFailures.clear(); activityCache.clear(); historyCache.clear(); }

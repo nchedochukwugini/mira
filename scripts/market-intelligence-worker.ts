@@ -1,19 +1,17 @@
 import { PublicKey } from "@solana/web3.js";
+import type { PoolClient } from "pg";
 import { getPool, upsertMarket } from "@/lib/db";
 import { getMarketProvider } from "@/lib/providers/market-provider";
 import { getPantaEventData } from "@/lib/panta/event-data";
 import { decodeOrderMatchedEventRaw, PANTA_CLOB_PROGRAM_ID, PANTA_ORDER_MATCHED_DISCRIMINATOR, PRICE_SCALE, SHARE_DECIMALS } from "@/lib/panta/clob-layout";
-import { collectActiveSecondarySnapshots } from "@/lib/panta/snapshot-collector";
 import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana/rpc";
 import { readPantaBuildContext } from "@/lib/panta/transaction-security";
 import { decimalNotionalFromRawUnits, identifyPantaFillQuoteMint, SOLANA_MAINNET_USDC_MINT } from "@/lib/panta/quote-asset";
 const tradeInterval = Math.max(15_000, Number(process.env.TRADE_HISTORY_POLL_INTERVAL_MS) || 45_000);
-const bookInterval = Math.max(5_000, Number(process.env.ORDERBOOK_POLL_INTERVAL_MS) || 10_000);
 const maxMarkets = Math.max(1, Math.min(20, Number(process.env.MARKET_WORKER_MAX_MARKETS) || 10));
 const maxSignaturesPerScan = 10_000;
 const maxAttempts = 8;
 let stopping = false;
-let lastBookRun: string | null = null;
 let lastTradeRun: string | null = null;
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
@@ -216,17 +214,17 @@ async function run() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for the market intelligence worker.");
   const connection = createSolanaMainnetConnection();
   await assertSolanaMainnet(connection);
-  const lock = await getPool().connect();
-  const lockResult = await lock.query("SELECT pg_try_advisory_lock(hashtext('mira-market-intelligence-worker')) AS locked");
-  if (lockResult.rows[0]?.locked !== true) throw new Error("Another market intelligence worker already holds the deployment lock.");
-  const provider = getMarketProvider();
-  if (provider.source !== "panta") throw new Error("The market intelligence worker requires Panta mode.");
-  log("worker_started", { tradeInterval, bookInterval, maxMarkets });
-  let nextTrade = 0;
-  let nextBook = 0;
-  while (!stopping) {
-    const now = Date.now();
-    if (now >= nextTrade) {
+  let lock: PoolClient | undefined;
+  try {
+    lock = await getPool().connect();
+    const lockResult = await lock.query("SELECT pg_try_advisory_lock(hashtext('mira-market-intelligence-trade-worker')) AS locked");
+    if (lockResult.rows[0]?.locked !== true) throw new Error("Another market-intelligence trade worker already holds the deployment lock.");
+    const provider = getMarketProvider();
+    if (provider.source !== "panta") throw new Error("The market intelligence worker requires Panta mode.");
+    log("trade_worker_started", { tradeInterval, maxMarkets });
+    let retryCount = 0;
+    while (!stopping) {
+      let delay = tradeInterval;
       try {
         const markets = await provider.discoverMarkets();
         const candidates = markets.filter((m) => m.source === "panta" && m.phase === "secondary" && m.pantaSecondaryActive === true && m.pantaIsGraduated === true && Boolean(m.pantaEventPda));
@@ -240,23 +238,26 @@ async function run() {
         for (const market of eligible) await scanMarket(market, connection);
         const processed = await processPending(connection);
         lastTradeRun = new Date().toISOString();
+        retryCount = 0;
         log("trade_poll_complete", { markets: eligible.length, processed, lastTradeRun });
-      } catch (error) { log("trade_poll_error", { message: error instanceof Error ? error.message : "unknown" }); }
-      nextTrade = Date.now() + tradeInterval;
+      } catch (error) {
+        retryCount = Math.min(retryCount + 1, 7);
+        delay = Math.min(tradeInterval, 1_000 * 2 ** retryCount);
+        log("trade_poll_error", { retry: retryCount, retryInMs: delay, code: dbErrorCode(error), message: error instanceof Error ? error.message : "unknown" });
+      }
+      if (!stopping) await wait(delay);
     }
-    if (now >= nextBook) {
-      try {
-        const result = await collectActiveSecondarySnapshots(maxMarkets);
-        lastBookRun = new Date().toISOString();
-        log("orderbook_poll_complete", { processed: result.processed, lastBookRun });
-      } catch (error) { log("orderbook_poll_error", { message: error instanceof Error ? error.message : "unknown" }); }
-      nextBook = Date.now() + bookInterval;
+  } finally {
+    log("trade_worker_stopping", { lastTradeRun });
+    if (lock) {
+      try { await lock.query("SELECT pg_advisory_unlock(hashtext('mira-market-intelligence-trade-worker'))"); }
+      catch (error) { log("trade_lock_release_error", { code: dbErrorCode(error) }); }
+      lock.release();
     }
-    await wait(Math.min(1_000, Math.max(100, Math.min(nextTrade, nextBook) - Date.now())));
+    await getPool().end();
   }
-  log("worker_stopping", { lastBookRun, lastTradeRun });
-  await lock.query("SELECT pg_advisory_unlock(hashtext('mira-market-intelligence-worker'))");
-  lock.release();
-  await getPool().end();
 }
-run().catch((error) => { log("worker_fatal", { message: error instanceof Error ? error.message : "unknown" }); process.exitCode = 1; });
+function dbErrorCode(error: unknown) {
+  return error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+}
+run().catch((error) => { log("trade_worker_fatal", { code: dbErrorCode(error), message: error instanceof Error ? error.message : "unknown" }); process.exitCode = 1; });

@@ -13,7 +13,7 @@ export async function collectActiveSecondarySnapshots(maxMarkets = 10) {
   for (const market of active.slice(0, limit)) {
     const snapshot = await getPantaOrderBookSnapshot(market.id);
     const alertsCreated = await recordMarketAlerts(market, snapshot);
-    observations.push({ marketId: market.id, observedAt: snapshot.observedAt, slot: snapshot.slot, dataStatus: snapshot.dataStatus, alertsCreated });
+    observations.push({ marketId: market.id, observedAt: snapshot.observedAt, slot: snapshot.slot, dataStatus: snapshot.dataStatus, reason: snapshot.reason, alertsCreated });
   }
   return { discoveredActiveSecondary: active.length, processed: observations.length, observations };
 }
