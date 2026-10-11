@@ -106,7 +106,7 @@
 .mira-settled-question{max-width:34%;overflow:hidden;color:#718070;font-size:8px;text-overflow:ellipsis;white-space:nowrap}
 .mira-investigation--settled .mira-investigation__landscape,.mira-investigation--settled .mira-investigation__topline,.mira-investigation--settled .mira-investigation__question,.mira-investigation--settled .mira-investigation__stage,.mira-investigation--settled .mira-investigation__phases{display:none}
 
-@media(max-width:767px){
+@media(max-width:930px){
   .workspace-world{min-height:100dvh;padding:0;background:#f5f6ee;overflow:visible}
   .workspace-frame,.workspace-frame--collapsed{display:block;min-height:100dvh;border:0;border-radius:0;overflow:visible;background:#f8f8f0}
   .workspace-sidebar,.workspace-sidebar--collapsed{position:fixed;z-index:40;inset:0 auto 0 0;width:min(310px,86vw);padding:16px 14px 14px;transform:translateX(-105%);box-shadow:14px 0 42px #2e493438;transition:transform .22s ease}

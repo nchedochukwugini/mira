@@ -5,7 +5,6 @@ import { motion } from "motion/react";
 import Image from "next/image";
 import type { Market } from "@/lib/panta/types";
 import { formatProviderPrice, formatQuoteAmount, marketPoolLiquidityDisplay } from "@/lib/panta/market-display";
-import { MiniChart } from "@/components/charts/MiniChart";
 import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { isSecondaryMarketCandidate, isSecondaryTradeEligibleMarket, isTradeEligibleMarket } from "@/lib/panta/trade-safety";
 
@@ -56,13 +55,11 @@ export function MarketCard({ market, onSelect, onTrade, isWatched, onWatch, inde
         </div>
         <button className={`watch-button ${isWatched ? "watch-button--active" : ""}`} onClick={() => onWatch(market)} aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}><Bookmark size={15} fill={isWatched ? "currentColor" : "none"} /></button>
       </div>
-      <MiniChart points={market.history} label={market.question} className="market-card__chart" />
       <div className="market-card__metrics">
         <div><span>ACTIVE VOLUME</span><b title="Active trade volume in the verified quote asset; it is not liquidity.">{formatQuoteAmount(activeVolume?.amount, activeVolume?.asset)}</b></div>
         <div><span>TOTAL VOLUME</span><b title="Total trade volume in the verified quote asset; it is not liquidity.">{formatQuoteAmount(market.totalVolume?.amount, market.totalVolume?.asset)}</b></div>
         <div><span>{poolDisplay.label}</span><b title={poolDisplay.title}>{poolDisplay.value}</b></div>
         <div><span>Quote asset</span><b title={market.quoteAssetResolution?.message ?? `Source: ${market.quoteAssetResolution?.source ?? "unavailable"}`}>{market.quoteAsset ?? (market.quoteAssetResolution?.status === "conflict" ? "Conflict" : "Unavailable")}</b></div>
-        <div><span>HISTORY</span><b>{market.history.length ? `${market.history.length} provider points` : market.source === "panta" ? "Provider history unavailable" : "Unavailable"}</b></div>
         <div><span>CLOSES</span><b className="metric-close">{closeLabel(market.closeAt)}</b></div>
       </div>
       <div className="market-card__footer"><span>{market.source === "panta" ? "Panta market data" : "Demo fixture"} · Updated {market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "time unavailable"}</span><MarketIdControl marketId={market.id} /><button onClick={() => onSelect(market)}>Details <span>→</span></button></div>
