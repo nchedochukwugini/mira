@@ -12,7 +12,9 @@ export function getPool() {
   let parsed: URL;
   try { parsed = new URL(connectionString); } catch { throw new Error("DATABASE_URL must be a valid PostgreSQL connection URL."); }
   if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") throw new Error("DATABASE_URL must use the PostgreSQL protocol.");
-  pool ??= new Pool({ connectionString, max: 5, ssl: parsed.hostname.endsWith("neon.tech") ? { rejectUnauthorized: false } : undefined });
+  const connectionTimeoutMillis = Math.max(0, Number(process.env.DB_CONNECT_TIMEOUT_MS) || 0);
+  const queryTimeout = Math.max(0, Number(process.env.DB_QUERY_TIMEOUT_MS) || 0);
+  pool ??= new Pool({ connectionString, max: 5, connectionTimeoutMillis, query_timeout: queryTimeout || undefined, ssl: parsed.hostname.endsWith("neon.tech") ? { rejectUnauthorized: false } : undefined });
   return pool;
 }
 

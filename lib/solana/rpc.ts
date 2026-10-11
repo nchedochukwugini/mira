@@ -23,7 +23,8 @@ export function createSolanaMainnetConnection(url = process.env.SOLANA_RPC_URL):
   const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
   if (parsed.protocol !== "https:" && !isLocal) throw new SolanaRpcConfigurationError("solana_rpc_must_use_https");
   if (!cachedConnection || cachedConnection.url !== url) {
-    cachedConnection = { url, connection: new Connection(url, { commitment: "confirmed" }) };
+    const timeoutMs = Math.max(1_000, Math.min(60_000, Number(process.env.SOLANA_RPC_TIMEOUT_MS) || 20_000));
+    cachedConnection = { url, connection: new Connection(url, { commitment: "confirmed", fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) }) }) };
   }
   return cachedConnection.connection;
 }

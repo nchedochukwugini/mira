@@ -7,10 +7,13 @@ import { decodeOrderMatchedEventRaw, PANTA_CLOB_PROGRAM_ID, PANTA_ORDER_MATCHED_
 import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana/rpc";
 import { readPantaBuildContext } from "@/lib/panta/transaction-security";
 import { decimalNotionalFromRawUnits, identifyPantaFillQuoteMint, SOLANA_MAINNET_USDC_MINT } from "@/lib/panta/quote-asset";
+import { acquireAdvisoryLock, runWorkerCycles, safeErrorMessage, shouldAdvanceNewestCheckpoint } from "./worker-runtime";
 const tradeInterval = Math.max(15_000, Number(process.env.TRADE_HISTORY_POLL_INTERVAL_MS) || 45_000);
 const maxMarkets = Math.max(1, Math.min(20, Number(process.env.MARKET_WORKER_MAX_MARKETS) || 10));
-const maxSignaturesPerScan = 10_000;
+const maxSignaturesPerScan = Math.max(100, Math.min(10_000, Number(process.env.TRADE_MAX_SIGNATURES_PER_SCAN) || 10_000));
+const maxTransactionsPerCycle = Math.max(1, Math.min(30, Number(process.env.TRADE_MAX_TRANSACTIONS_PER_CYCLE) || 30));
 const maxAttempts = 8;
+const oneShot = process.argv.includes("--once");
 let stopping = false;
 let lastTradeRun: string | null = null;
 process.on("SIGINT", () => { stopping = true; });
@@ -112,6 +115,7 @@ async function scanMarket(market: Awaited<ReturnType<ReturnType<typeof getMarket
     historyExhausted = true;
     backfillCursor = null;
   }
+  const advanceCheckpoint = shouldAdvanceNewestCheckpoint(Boolean(checkpoint), reachedCheckpoint, headExhausted);
   const db = getPool();
   const client = await db.connect();
   try {
@@ -124,21 +128,22 @@ async function scanMarket(market: Awaited<ReturnType<ReturnType<typeof getMarket
     const scanComplete = historyExhausted || (!checkpoint && headExhausted);
     await client.query(`INSERT INTO panta_trade_scans(market_id,event_pda,newest_signature,newest_slot,backfill_signature,initial_scan_complete,last_success_at,last_error)
       VALUES($1,$2,$3,$4,$5,$6,now(),NULL) ON CONFLICT(market_id) DO UPDATE SET event_pda=EXCLUDED.event_pda,
-      newest_signature=COALESCE(EXCLUDED.newest_signature,panta_trade_scans.newest_signature),newest_slot=COALESCE(EXCLUDED.newest_slot,panta_trade_scans.newest_slot),
+      newest_signature=CASE WHEN $7 THEN COALESCE(EXCLUDED.newest_signature,panta_trade_scans.newest_signature) ELSE panta_trade_scans.newest_signature END,newest_slot=CASE WHEN $7 THEN COALESCE(EXCLUDED.newest_slot,panta_trade_scans.newest_slot) ELSE panta_trade_scans.newest_slot END,
       backfill_signature=CASE WHEN panta_trade_scans.initial_scan_complete THEN NULL ELSE EXCLUDED.backfill_signature END,
-      initial_scan_complete=panta_trade_scans.initial_scan_complete OR EXCLUDED.initial_scan_complete,last_success_at=now(),last_error=NULL,updated_at=now()`, [marketDbId, eventAddress, newest?.signature ?? null, newest?.slot ?? null, backfillCursor, scanComplete]);
+      initial_scan_complete=panta_trade_scans.initial_scan_complete OR EXCLUDED.initial_scan_complete,last_success_at=now(),last_error=NULL,updated_at=now()`, [marketDbId, eventAddress, newest?.signature ?? null, newest?.slot ?? null, backfillCursor, scanComplete, advanceCheckpoint]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   const fetched = headFetched + olderFetched;
-  if (!historyExhausted) log("history_scan_bounded", { marketId: market.id, fetched, checkpointReached: reachedCheckpoint, backfillCursorPresent: Boolean(backfillCursor) });
-  return { marketId: market.id, fetched, queued: discovered.size, checkpointReached: reachedCheckpoint, historyComplete: historyExhausted };
+  const newestSignature = advanceCheckpoint ? newest?.signature ?? checkpoint ?? null : checkpoint ?? null;
+  if (!historyExhausted) log("history_scan_bounded", { marketId: market.id, fetched, checkpointReached: reachedCheckpoint, newestSignature, backfillSignature: backfillCursor });
+  return { marketId: market.id, fetched, queued: discovered.size, newestSignature, backfillSignature: backfillCursor, checkpointReached: reachedCheckpoint, checkpointAdvanced: advanceCheckpoint, historyComplete: historyExhausted };
 }
 
 async function processPending(connection: ReturnType<typeof createSolanaMainnetConnection>) {
   const result = await getPool().query(`SELECT p.signature,p.market_id,p.event_pda,p.slot,p.block_time,p.attempts,m.provider_market_id
     FROM panta_pending_transactions p JOIN markets m ON m.id=p.market_id
     WHERE p.status IN ('discovered','unavailable') AND p.next_attempt_at<=now() AND p.attempts<$1
-    ORDER BY p.discovered_at LIMIT 30`, [maxAttempts]);
+    ORDER BY p.discovered_at LIMIT $2`, [maxAttempts, maxTransactionsPerCycle]);
   let processed = 0;
   const marketContexts = new Map<string, ReturnType<typeof readPantaBuildContext>>();
   for (const row of result.rows) {
@@ -167,7 +172,7 @@ async function processPending(connection: ReturnType<typeof createSolanaMainnetC
             if (context.usdcMint.toBase58() === quoteInstruction.mint) quoteIdentity = { status: "verified", mint: quoteInstruction.mint, symbol: "USDC", decimals: 6, network: "mainnet-beta", source: "on-chain-market-config", reason: null };
             else quoteIdentity = { ...quoteIdentity, status: "unsupported", mint: quoteInstruction.mint, reason: "The order instruction quote mint does not match the verified MarketConfig mint." };
           } catch (error) {
-            quoteIdentity = { ...quoteIdentity, status: "unknown", mint: quoteInstruction.mint, source: "on-chain-instruction", reason: error instanceof Error ? error.message : "MarketConfig quote mint could not be verified." };
+            quoteIdentity = { ...quoteIdentity, status: "unknown", mint: quoteInstruction.mint, source: "on-chain-instruction", reason: safeErrorMessage(error) };
           }
         } else if (quoteInstruction.status === "identified") quoteIdentity = { ...quoteIdentity, status: "unsupported", mint: quoteInstruction.mint, source: "on-chain-instruction", reason: "The instruction exposes a quote-mint account, but it does not match the configured canonical mainnet USDC mint for Panta's USDC order instruction." };
         else if (quoteInstruction.status === "unsupported") quoteIdentity = { ...quoteIdentity, status: "unsupported", reason: quoteInstruction.reason };
@@ -197,7 +202,7 @@ async function processPending(connection: ReturnType<typeof createSolanaMainnetC
         status = eventIndex ? "matched" : invokesProgram ? "no_match" : "no_match";
       }
     } catch (error) {
-      errorText = error instanceof Error ? error.message.slice(0, 500) : "Transaction processing failed.";
+      errorText = safeErrorMessage(error).slice(0, 500);
     }
     const retryDelaySeconds = Math.min(3_600, 15 * 2 ** Math.min(attempts - 1, 8));
     await getPool().query(`UPDATE panta_pending_transactions SET status=$3,attempts=$4,last_error=$5,
@@ -217,15 +222,11 @@ async function run() {
   let lock: PoolClient | undefined;
   try {
     lock = await getPool().connect();
-    const lockResult = await lock.query("SELECT pg_try_advisory_lock(hashtext('mira-market-intelligence-trade-worker')) AS locked");
-    if (lockResult.rows[0]?.locked !== true) throw new Error("Another market-intelligence trade worker already holds the deployment lock.");
+    if (!(await acquireAdvisoryLock(lock, "mira-market-intelligence-trade-worker"))) throw new Error("Another market-intelligence trade worker already holds the deployment lock.");
     const provider = getMarketProvider();
     if (provider.source !== "panta") throw new Error("The market intelligence worker requires Panta mode.");
-    log("trade_worker_started", { tradeInterval, maxMarkets });
-    let retryCount = 0;
-    while (!stopping) {
-      let delay = tradeInterval;
-      try {
+    log("trade_worker_started", { mode: oneShot ? "once" : "continuous", tradeInterval, maxMarkets, maxSignaturesPerScan, maxTransactionsPerCycle });
+    await runWorkerCycles({ once: oneShot, cycle: async () => {
         const markets = await provider.discoverMarkets();
         const candidates = markets.filter((m) => m.source === "panta" && m.phase === "secondary" && m.pantaSecondaryActive === true && m.pantaIsGraduated === true && Boolean(m.pantaEventPda));
         const tracked = await Promise.all(candidates.map(async (market) => {
@@ -235,18 +236,15 @@ async function run() {
         }));
         tracked.sort((a, b) => Number(b.market.status === "active") - Number(a.market.status === "active") || a.lastScanned - b.lastScanned);
         const eligible = tracked.slice(0, maxMarkets).map((item) => item.market);
-        for (const market of eligible) await scanMarket(market, connection);
+        const scans: Array<Awaited<ReturnType<typeof scanMarket>>> = [];
+        for (const market of eligible) {
+          const scan = await scanMarket(market, connection);
+          scans.push(scan);
+        }
         const processed = await processPending(connection);
         lastTradeRun = new Date().toISOString();
-        retryCount = 0;
-        log("trade_poll_complete", { markets: eligible.length, processed, lastTradeRun });
-      } catch (error) {
-        retryCount = Math.min(retryCount + 1, 7);
-        delay = Math.min(tradeInterval, 1_000 * 2 ** retryCount);
-        log("trade_poll_error", { retry: retryCount, retryInMs: delay, code: dbErrorCode(error), message: error instanceof Error ? error.message : "unknown" });
-      }
-      if (!stopping) await wait(delay);
-    }
+        return { marketsDiscovered: markets.length, marketsScanned: eligible.length, signaturesFetched: scans.reduce((sum, item) => sum + (item?.fetched ?? 0), 0), transactionsQueued: scans.reduce((sum, item) => sum + (item?.queued ?? 0), 0), transactionsAttempted: processed, cursors: scans.flatMap((item) => item ? [{ marketId: item.marketId, newestSignature: item.newestSignature, backfillSignature: item.backfillSignature, checkpointReached: item.checkpointReached, historyComplete: item.historyComplete }] : []), lastTradeRun };
+      }, wait, intervalMs: tradeInterval, shouldStop: () => stopping, log: (event, detail) => log(event === "cycle_complete" ? "trade_poll_complete" : "trade_poll_error", detail) });
   } finally {
     log("trade_worker_stopping", { lastTradeRun });
     if (lock) {
@@ -260,4 +258,4 @@ async function run() {
 function dbErrorCode(error: unknown) {
   return error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
-run().catch((error) => { log("trade_worker_fatal", { code: dbErrorCode(error), message: error instanceof Error ? error.message : "unknown" }); process.exitCode = 1; });
+run().catch((error) => { log("trade_worker_fatal", { code: dbErrorCode(error), message: safeErrorMessage(error) }); process.exitCode = 1; });

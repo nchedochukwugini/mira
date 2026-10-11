@@ -1,0 +1,82 @@
+name: MIRA Market Intelligence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mira-market-intelligence-production
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect verified fills and market snapshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PANTA_API_KEY: ${{ secrets.PANTA_API_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+      NEXT_PUBLIC_MARKET_PROVIDER: panta
+      MARKET_WORKER_MAX_MARKETS: "1"
+      TRADE_MAX_SIGNATURES_PER_SCAN: "1000"
+      TRADE_MAX_TRANSACTIONS_PER_CYCLE: "10"
+      SOLANA_RPC_TIMEOUT_MS: "15000"
+      DB_CONNECT_TIMEOUT_MS: "10000"
+      DB_QUERY_TIMEOUT_MS: "30000"
+      MIRA_WORKER_MODE: "true"
+    steps:
+      - name: Check required repository secrets
+        id: required-secrets
+        shell: bash
+        run: |
+          missing=0
+          for name in DATABASE_URL PANTA_API_KEY SOLANA_RPC_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required Actions secret is missing: $name"
+              missing=1
+            fi
+          done
+          if [[ "$missing" == "1" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Production collection skipped"
+              echo "Add the missing repository Actions secrets listed in the preceding step, then run this workflow again. No worker was started."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541d4ebdcaad769d146ecb2ff479c0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --include=dev
+        if: steps.required-secrets.outputs.ready == 'true'
+      - name: Verify production credential targets
+        id: target-check
+        if: steps.required-secrets.outputs.ready == 'true'
+        run: |
+          node -e 'const u = new URL(process.env.DATABASE_URL); const neon = u.hostname.endsWith(".neon.tech"); const mira = decodeURIComponent(u.pathname.replace(/^\//, "")).toLowerCase() === "mira"; if (!neon || !mira) { console.error("DATABASE_URL must target the Neon MIRA database."); process.exit(1); } if (!process.env.PANTA_API_KEY.startsWith("pk_live_")) { console.error("PANTA_API_KEY must be a Panta live key for production collection."); process.exit(1); } console.log("Production target verified: Neon database MIRA and Panta live credentials.");'
+      - name: Record worker start time
+        id: worker-start
+        if: steps.required-secrets.outputs.ready == 'true' && steps.target-check.outcome == 'success'
+        run: echo "at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - name: Run one bounded trade scan
+        if: steps.required-secrets.outputs.ready == 'true'
+        run: npm run worker:market-intelligence:once
+      - name: Run one bounded snapshot collection
+        if: steps.required-secrets.outputs.ready == 'true'
+        run: npm run worker:market-snapshots:once
+      - name: Verify persisted production data (read only)
+        if: always() && steps.required-secrets.outputs.ready == 'true' && steps.target-check.outcome == 'success'
+        env:
+          MIRA_WORKER_STARTED_AT: ${{ steps.worker-start.outputs.at }}
+        run: node scripts/verify-market-worker-data.mjs

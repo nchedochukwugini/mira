@@ -277,6 +277,7 @@ export async function getPantaOrderBookSnapshot(marketId: string, now = Date.now
         persistenceFailures.set(marketId, { attempts, retryAt: now + retryInMs });
         const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
         console.error(JSON.stringify({ at: new Date().toISOString(), service: "mira-market-snapshots", event: "snapshot_persist_error", marketId, retry: attempts, retryInMs, code }));
+        if (process.env.MIRA_WORKER_MODE === "true") throw error;
       }
     }
     if (snapshot.dataStatus !== "unavailable") {
