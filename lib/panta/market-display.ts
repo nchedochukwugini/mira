@@ -21,6 +21,7 @@ export function marketPoolLiquidityDisplay(market: Market) {
 
 export function formatProviderPrice(market: Market, outcome: "YES" | "NO"): string {
   if (market.quoteAsset === "USDC") {
+    if (!market.priceProvenance || market.priceProvenance.kind === "unknown") return "No quote";
     const value = outcome === "YES" ? market.yesProbability : market.noProbability;
     return value === null ? "No quote" : `${(value * 100).toFixed(0)}%`;
   }

@@ -30,7 +30,7 @@ export function MarketCard({ market, onSelect, onTrade, isWatched, onWatch, inde
   const tradeAllowed = isTradeEligibleMarket(market) || isSecondaryTradeEligibleMarket(market) || isSecondaryMarketCandidate(market);
   const phaseLabel = market.phase?.trim() ? market.phase.replace(/[_-]+/g, " ").toUpperCase() : "PHASE UNAVAILABLE";
   const hasVerifiedPrices = market.quoteAsset === "USDC"
-    ? market.yesProbability !== null && market.noProbability !== null
+    ? Boolean(market.priceProvenance && market.priceProvenance.kind !== "unknown") && market.yesProbability !== null && market.noProbability !== null
     : market.pantaPrices?.quoteAsset !== null && market.pantaPrices?.quoteAsset !== undefined && market.pantaPrices.yes !== null && market.pantaPrices.no !== null;
   const completeness = hasVerifiedPrices && (market.activeVolume?.amount !== null && market.activeVolume?.amount !== undefined || market.volumeUsd !== null) && market.closeAt !== null && market.status !== "unknown";
   const pantaLabel = pantaEnvironment === "test" ? "PANTA TEST" : "PANTA · UNKNOWN";

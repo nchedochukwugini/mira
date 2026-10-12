@@ -12,8 +12,6 @@ import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { calculateMovement, dataStatusForMarket } from "@/lib/intelligence/core";
 import { formatProviderPrice, formatQuoteAmount, marketPoolLiquidityDisplay } from "@/lib/panta/market-display";
 
-const pct = (value: number | null) => value === null ? "Data unavailable" : `${(value * 100).toFixed(1)}%`;
-
 export function MarketIntelPanel({ market, markets, onSelect, onTrade, onAskMira, isDemo, pantaEnvironment = "unknown", relationships = [], allowTrading = true, detailLoading = false, detailWarning = "" }: {
   market: Market | null;
   markets: Market[];
@@ -29,7 +27,7 @@ export function MarketIntelPanel({ market, markets, onSelect, onTrade, onAskMira
 }) {
   if (!market) return <aside className="intel-panel intel-panel--empty"><div className="intel-empty-art"><div className="intel-sun" /><div className="intel-hill intel-hill--one" /><div className="intel-hill intel-hill--two" /><span>⌁</span></div><div className="intel-empty-copy"><span className="panel-kicker">MARKET INTELLIGENCE</span><h2>Your market lens</h2><p>Run an analysis or select a market to inspect current prices, activity and provider-linked context.</p></div><div className="intel-empty-foot"><ShieldCheck size={15} /> Market data stays source-labelled</div></aside>;
   const hasVerifiedPrices = market.quoteAsset === "USDC"
-    ? market.yesProbability !== null && market.noProbability !== null
+    ? Boolean(market.priceProvenance && market.priceProvenance.kind !== "unknown") && market.yesProbability !== null && market.noProbability !== null
     : market.pantaPrices?.quoteAsset !== null && market.pantaPrices?.quoteAsset !== undefined && market.pantaPrices.yes !== null && market.pantaPrices.no !== null;
   const complete = hasVerifiedPrices && (market.activeVolume?.amount !== null && market.activeVolume?.amount !== undefined || market.volumeUsd !== null) && market.closeAt !== null && market.status !== "unknown";
   const poolDisplay = marketPoolLiquidityDisplay(market);
@@ -46,9 +44,10 @@ export function MarketIntelPanel({ market, markets, onSelect, onTrade, onAskMira
       {detailWarning && <div className="intel-detail-note intel-detail-note--warning" role="status">{detailWarning} Catalog values remain shown where available.</div>}
       <div className="probability-card">
         <div className="probability-card__top"><span>{market.quoteAsset === "USDC" ? "PANTA REPORTED PROBABILITY" : "PANTA REPORTED PRICE"}</span><span><Activity size={13} /> {market.status.toUpperCase()}</span></div>
-        <div className="probability-main"><strong className={!market.pantaPrices?.yes && market.yesProbability === null ? "probability-main__unavailable" : undefined}>{market.quoteAsset === "USDC" ? pct(market.yesProbability) : formatProviderPrice(market, "YES")}</strong><span>YES</span></div>
+        <div className="probability-main"><strong className={formatProviderPrice(market, "YES") === "No quote" ? "probability-main__unavailable" : undefined}>{formatProviderPrice(market, "YES")}</strong><span>YES</span></div>
         {market.quoteAsset === "USDC" && market.yesProbability !== null && market.noProbability !== null
-          ? <><div className="probability-track" role="img" aria-label={`YES ${pct(market.yesProbability)}, NO ${pct(market.noProbability)}`}><i className="probability-track__yes" style={{ width: `${market.yesProbability * 100}%` }} /><i className="probability-track__no" style={{ width: `${market.noProbability * 100}%` }} /></div><div className="probability-foot"><span>YES</span><b>{pct(market.yesProbability)}</b><span>NO</span><b>{pct(market.noProbability)}</b></div></>
+          && market.priceProvenance !== undefined && market.priceProvenance.kind !== "unknown"
+          ? <><div className="probability-track" role="img" aria-label={`YES ${formatProviderPrice(market, "YES")}, NO ${formatProviderPrice(market, "NO")}`}><i className="probability-track__yes" style={{ width: `${market.yesProbability * 100}%` }} /><i className="probability-track__no" style={{ width: `${market.noProbability * 100}%` }} /></div><div className="probability-foot"><span>YES</span><b>{formatProviderPrice(market, "YES")}</b><span>NO</span><b>{formatProviderPrice(market, "NO")}</b></div></>
           : <div className="probability-foot"><span>YES</span><b>{formatProviderPrice(market, "YES")}</b><span>NO</span><b>{formatProviderPrice(market, "NO")}</b></div>}
       </div>
       <div className="intel-metrics">

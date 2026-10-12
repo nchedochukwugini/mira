@@ -121,15 +121,17 @@ export function normalizePantaMarket(value: unknown): Market | null {
   const question = firstText(row.title, row.question, row.name, row.market_question) ?? "Market title unavailable";
   if (!id) return null;
   const phase = firstText(row.phase, row.tradingPhase, row.trading_phase)?.toLowerCase();
+  const rawPriceSource = firstText(row.priceSource, row.price_source)?.toLowerCase();
+  const priceKind = rawPriceSource === "secondary_last_trade" || rawPriceSource === "last_trade" ? "last_trade" as const : rawPriceSource === "best_bid" ? "best_bid" as const : rawPriceSource === "best_ask" ? "best_ask" as const : rawPriceSource === "spot" || rawPriceSource === "provider_spot" ? "provider_spot" as const : "unknown" as const;
   const yesProbability = firstProbability(
     row.yesPrice,
     row.yes_probability,
-    phase === "secondary" ? row.secondaryYesPrice : phase === "primary" ? row.primaryYesPrice : null,
+    phase === "secondary" && priceKind !== "unknown" ? row.secondaryYesPrice : phase === "primary" ? row.primaryYesPrice : null,
   );
   const noProbability = firstProbability(
     row.noPrice,
     row.no_probability,
-    phase === "secondary" ? row.secondaryNoPrice : phase === "primary" ? row.primaryNoPrice : null,
+    phase === "secondary" && priceKind !== "unknown" ? row.secondaryNoPrice : phase === "primary" ? row.primaryNoPrice : null,
   );
   const rawStatus = firstText(row.status)?.toLowerCase();
   const resolved = row.resolved === true || row.isResolved === true || row.is_resolved === true || phase === "resolved" || rawStatus === "resolved";
@@ -171,9 +173,6 @@ export function normalizePantaMarket(value: unknown): Market | null {
   const primaryPoolRaw = row.primaryPoolLamports ?? row.primary_pool_lamports;
   const rawYesPrice = row.yesPrice ?? row.yes_price ?? row.yes_probability ?? null;
   const rawNoPrice = row.noPrice ?? row.no_price ?? row.no_probability ?? null;
-  const rawPriceSource = firstText(row.priceSource, row.price_source)?.toLowerCase();
-  const priceKind = rawPriceSource === "secondary_last_trade" || rawPriceSource === "last_trade" ? "last_trade" as const : rawPriceSource === "best_bid" ? "best_bid" as const : rawPriceSource === "best_ask" ? "best_ask" as const : rawPriceSource === "spot" || rawPriceSource === "provider_spot" ? "provider_spot" as const : "unknown" as const;
-
   return {
     id,
     question,
