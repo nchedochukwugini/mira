@@ -270,6 +270,7 @@
 .intel-market-image{position:relative;height:150px;margin:12px 0;overflow:hidden;border:1px solid #dce5d6;border-radius:10px;background:linear-gradient(135deg,#e7efdc,#f4efe0)}
 .intel-market-image img{display:block;width:100%;height:100%;object-fit:cover}
 .intel-market-image>span{display:grid;height:100%;place-items:center;color:#748174;font-size:11px}
+.market-card__image [hidden],.intel-market-image [hidden]{display:none!important}
 @media(max-width:700px){.market-card__image{height:130px}.intel-market-image{height:125px}}
 .market-card__outcome-buttons .price-pill{cursor:pointer}
 .markets-filter{position:relative;flex:none}
