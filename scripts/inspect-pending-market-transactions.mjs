@@ -62,6 +62,20 @@ async function inspect(row, auditGroup) {
 
 try {
   await assertSolanaMainnet(connection);
+  let tradeWorkerLockOwners = [];
+  let lockInspectionError = null;
+  try {
+    const locks = await pool.query(`WITH lock_key AS (SELECT hashtext('mira-market-intelligence-trade-worker')::bigint AS key)
+      SELECT a.application_name,a.state,a.backend_type,
+        floor(extract(epoch FROM (clock_timestamp()-a.backend_start)))::int AS backend_age_seconds
+      FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid CROSS JOIN lock_key k
+      WHERE l.locktype='advisory' AND l.granted AND l.objsubid=1 AND l.pid<>pg_backend_pid()
+        AND l.classid::bigint=((k.key >> 32) & 4294967295)
+        AND l.objid::bigint=(k.key & 4294967295)`);
+    tradeWorkerLockOwners = locks.rows;
+  } catch (error) {
+    lockInspectionError = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "unknown";
+  }
   const [current, priorNoMatch] = await Promise.all([
     pool.query(`SELECT p.signature,m.provider_market_id,p.event_pda,p.slot,p.status,p.attempts,p.discovered_at
     FROM panta_pending_transactions p JOIN markets m ON m.id=p.market_id
@@ -80,7 +94,7 @@ try {
     return rows;
   };
   const [currentRows, priorRows] = await Promise.all([inspectGroup(current.rows, "current_run_attempt"), inspectGroup(priorNoMatch.rows, "latest_prior_no_match")]);
-  console.log(JSON.stringify({ event: "pending_transaction_audit", database: "Neon MIRA", since: new Date(startedAt).toISOString(), currentRunAttemptCount: currentRows.length, priorNoMatchCount: priorRows.length, currentRunAttempts: currentRows, latestPriorNoMatch: priorRows }));
+  console.log(JSON.stringify({ event: "pending_transaction_audit", database: "Neon MIRA", since: new Date(startedAt).toISOString(), tradeWorkerLockOwners, ...(lockInspectionError ? { lockInspectionError } : {}), currentRunAttemptCount: currentRows.length, priorNoMatchCount: priorRows.length, currentRunAttempts: currentRows, latestPriorNoMatch: priorRows }));
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "unknown";
   console.error(JSON.stringify({ event: "pending_transaction_audit_failed", code, message: "Read-only pending transaction inspection failed." }));
