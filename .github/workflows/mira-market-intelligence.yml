@@ -18,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Session advisory locks require a dedicated backend. Neon pooled URLs
+      # use PgBouncer transaction pooling and cannot safely hold this lock.
+      DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
       PANTA_API_KEY: ${{ secrets.PANTA_API_KEY }}
       SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
       NEXT_PUBLIC_MARKET_PROVIDER: panta
@@ -35,7 +37,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in DATABASE_URL PANTA_API_KEY SOLANA_RPC_URL; do
+          for name in DATABASE_URL_DIRECT PANTA_API_KEY SOLANA_RPC_URL; do
             if [[ -z "${!name:-}" ]]; then
               echo "Required Actions secret is missing: $name"
               missing=1
@@ -64,7 +66,7 @@ jobs:
         id: target-check
         if: steps.required-secrets.outputs.ready == 'true'
         run: |
-          node -e 'const u = new URL(process.env.DATABASE_URL); const neon = u.hostname.endsWith(".neon.tech"); const mira = decodeURIComponent(u.pathname.replace(/^\//, "")).toLowerCase() === "mira"; if (!neon || !mira) { console.error("DATABASE_URL must target the Neon MIRA database."); process.exit(1); } if (!process.env.PANTA_API_KEY.startsWith("pk_live_")) { console.error("PANTA_API_KEY must be a Panta live key for production collection."); process.exit(1); } console.log("Production target verified: Neon database MIRA and Panta live credentials.");'
+          node -e 'const u = new URL(process.env.DATABASE_URL); const neon = u.hostname.endsWith(".neon.tech"); const mira = decodeURIComponent(u.pathname.replace(/^\//, "")).toLowerCase() === "mira"; const direct = !u.hostname.includes("-pooler"); if (!neon || !mira || !direct) { console.error("DATABASE_URL_DIRECT must target the direct Neon MIRA endpoint (not PgBouncer)."); process.exit(1); } if (!process.env.PANTA_API_KEY.startsWith("pk_live_")) { console.error("PANTA_API_KEY must be a Panta live key for production collection."); process.exit(1); } console.log("Production target verified: direct Neon database MIRA and Panta live credentials.");'
       - name: Record worker start time
         id: worker-start
         if: steps.required-secrets.outputs.ready == 'true' && steps.target-check.outcome == 'success'
