@@ -2,6 +2,15 @@ name: MIRA Market Intelligence
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Collection run or read-only audit of unavailable markets
+        type: choice
+        options:
+          - collect
+          - audit-unavailable
+        default: collect
+        required: true
   schedule:
     - cron: "*/30 * * * *"
 
@@ -15,6 +24,7 @@ concurrency:
 jobs:
   collect:
     name: Collect verified fills and market snapshots
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'collect'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -91,3 +101,28 @@ jobs:
         env:
           MIRA_WORKER_STARTED_AT: ${{ steps.worker-start.outputs.at }}
         run: node --conditions=react-server --import tsx scripts/inspect-pending-market-transactions.mjs
+
+  audit-unavailable:
+    name: Audit recent unavailable markets (read only)
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'audit-unavailable'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --omit=dev
+      - name: Verify direct Neon MIRA target
+        run: |
+          node -e 'const u = new URL(process.env.DATABASE_URL); const neon = u.hostname.endsWith(".neon.tech"); const mira = decodeURIComponent(u.pathname.replace(/^\//, "")).toLowerCase() === "mira"; const direct = !u.hostname.includes("-pooler"); if (!neon || !mira || !direct) { console.error("DATABASE_URL_DIRECT must target the direct Neon MIRA endpoint."); process.exit(1); } console.log("Read-only audit target verified: direct Neon database MIRA.");'
+      - name: Inspect recent active-market unavailable alerts
+        run: node scripts/inspect-unavailable-market-alerts.mjs
