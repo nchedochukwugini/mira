@@ -76,12 +76,12 @@ function PrimaryTradeTicket({ market, initialOutcome, initialAmount, autoPrepare
     setStage("building"); setError(""); setPrepared(null);
     try {
       const response = await fetch("/api/trade/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quoteId: currentQuote.id, wallet: wallet.publicKey.toBase58() }) });
-      const payload = await response.json() as { data?: PantaTradeBuild; error?: string };
-      if (!response.ok || !payload.data) throw new Error(payload.error ?? "Panta did not prepare a transaction.");
+      const payload = await readJsonApiResponse<{ data?: PantaTradeBuild }>(response);
+      if (!payload.data) throw new Error("Panta did not prepare a transaction.");
       if (payload.data.wallet !== wallet.publicKey.toBase58() || payload.data.marketId !== market.id || payload.data.quoteId !== currentQuote.id || payload.data.side.toUpperCase() !== currentQuote.outcome || Number(payload.data.amountUsdc) !== currentQuote.amountUsd) throw new Error("Panta’s prepared transaction did not match the quote on screen. Nothing was signed.");
       setPrepared(payload.data);
       setStage("prepared");
-    } catch (cause) { setError(shortError(cause)); setStage("failed"); }
+    } catch (cause) { setError(shortError(transactionNetworkError(cause))); setStage("failed"); }
   }, [market.id, wallet]);
 
   const requestQuote = useCallback(async () => {
@@ -90,14 +90,14 @@ function PrimaryTradeTicket({ market, initialOutcome, initialAmount, autoPrepare
     setQuote(null); setPrepared(null); setError(""); setStage("quoting");
     try {
       const response = await fetch("/api/trade/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ marketId: market.id, outcome, amountUsd: amountNumber, wallet: wallet.publicKey.toBase58() }) });
-      const payload = await response.json() as { data?: TradeQuote; error?: string };
-      if (!response.ok || !payload.data) throw new Error(payload.error ?? "Panta did not return a quote.");
+      const payload = await readJsonApiResponse<{ data?: TradeQuote }>(response);
+      if (!payload.data) throw new Error("Panta did not return a quote.");
       const newQuote = payload.data;
       if (newQuote.marketId !== market.id || newQuote.outcome !== outcome || newQuote.amountUsd !== amountNumber) throw new Error("Panta returned a quote for different trade details. No transaction was prepared.");
       setQuote(newQuote);
       if (newQuote.source === "panta") await prepareTransaction(newQuote);
       else setStage("failed");
-    } catch (cause) { setError(shortError(cause)); setStage("failed"); }
+    } catch (cause) { setError(shortError(transactionNetworkError(cause))); setStage("failed"); }
   }, [amountNumber, market.id, outcome, prepareTransaction, wallet]);
 
   useEffect(() => {
