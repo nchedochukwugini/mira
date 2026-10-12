@@ -34,12 +34,13 @@ async function run() {
     log("snapshot_worker_started", { mode: oneShot ? "once" : "continuous", pollInterval, maxMarkets });
     await runWorkerCycles({ once: oneShot, cycle: async () => {
         const result = await collectActiveSecondarySnapshots(maxMarkets);
-        lastSuccessfulPoll = new Date().toISOString();
         const summary = summarizeSnapshotObservations(result.observations);
+        log("snapshot_candidate_report", { discovered: result.discovered, eligible: result.eligible, exclusions: result.exclusions, observations: result.observations.map(({ marketId, dataStatus, reason, bookShape, yesBidCount, yesAskCount, noBidCount, noAskCount }) => ({ marketId, dataStatus, reason, bookShape, yesBidCount, yesAskCount, noBidCount, noAskCount })) });
         if (result.processed > 0 && summary.unavailable === result.processed) {
           throw Object.assign(new Error("Every selected market snapshot was unavailable; no complete collection was recorded."), { code: "SNAPSHOT_ALL_UNAVAILABLE" });
         }
-        return { discovered: result.discoveredActiveSecondary, marketsObserved: result.processed, ...summary, observations: result.observations.map(({ marketId, observedAt, slot, dataStatus, reason }) => ({ marketId, observedAt, slot, dataStatus, reason })), lastSuccessfulPoll };
+        if (result.processed > summary.unavailable) lastSuccessfulPoll = new Date().toISOString();
+        return { discovered: result.discovered, eligible: result.eligible, marketsObserved: result.processed, ...summary, exclusions: result.exclusions, observations: result.observations.map(({ marketId, observedAt, slot, dataStatus, reason, bookShape, yesBidCount, yesAskCount, noBidCount, noAskCount }) => ({ marketId, observedAt, slot, dataStatus, reason, bookShape, yesBidCount, yesAskCount, noBidCount, noAskCount })), lastSuccessfulPoll };
       }, wait, intervalMs: pollInterval, shouldStop: () => stopping, log: (event, detail) => log(event === "cycle_complete" ? "snapshot_poll_complete" : "snapshot_poll_error", detail) });
   } finally {
     log("snapshot_worker_stopping", { lastSuccessfulPoll });

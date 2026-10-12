@@ -263,13 +263,24 @@ export class PantaClient {
     const officialEvents = await this.getOfficialEventMetadata();
     const trustedCatalog = catalog.map((market) => applyAuthoritativeQuoteMetadata(market, officialEvents.get(market.id) ?? null));
     const catalogById = new Map(trustedCatalog.map((market) => [market.id, market]));
-    // Detail carries current secondary quotes and primary-pool metadata omitted
-    // by the catalog. Keep all list enrichment within the existing 16-detail cap.
-    const secondaryMarkets = trustedCatalog.filter((market) => market.phase === "secondary" && market.status === "active").slice(0, MAX_SECONDARY_DETAILS);
-    const secondaryIds = new Set(secondaryMarkets.map((market) => market.id));
+    // Hydrate eligible and plausibly active secondary markets first. Panta's
+    // catalog sometimes omits the secondary-active/graduated flags even when
+    // it confirms unresolved status; the detail endpoint supplies those flags.
+    // Keep every lookup within the existing 16-detail cap.
+    const secondaryMarkets = trustedCatalog
+      .filter((market) => market.phase === "secondary"
+        && market.status !== "closed" && market.status !== "resolved"
+        && market.pantaIsResolved !== true
+        && market.pantaSecondaryActive !== false
+        && market.pantaIsGraduated !== false
+        && (market.status === "active" || market.pantaIsResolved === false))
+      .sort((left, right) => Number(right.status === "active") - Number(left.status === "active"));
     const poolCandidates = (query?.trim() ? rankDiscoveredMarkets(query, trustedCatalog) : trustedCatalog)
-      .filter((market) => market.primaryPoolLiquidityUsd === null && !secondaryIds.has(market.id));
-    const detailMarkets = [...secondaryMarkets, ...poolCandidates.slice(0, Math.max(0, MAX_SECONDARY_DETAILS - secondaryMarkets.length))];
+      .filter((market) => market.phase !== "secondary" && market.primaryPoolLiquidityUsd === null);
+    const detailMarkets = [
+      ...secondaryMarkets.slice(0, MAX_SECONDARY_DETAILS),
+      ...poolCandidates.slice(0, Math.max(0, MAX_SECONDARY_DETAILS - Math.min(secondaryMarkets.length, MAX_SECONDARY_DETAILS))),
+    ];
     const resolvedDetails = await Promise.all(detailMarkets.map(async (market) => {
       const cached = this.marketDetailCache.get(market.id);
       if (cached && cached.expiresAt > Date.now()) {

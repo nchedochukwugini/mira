@@ -1,5 +1,9 @@
 import type { Market } from "@/lib/panta/types";
 
+export function marketStatusLabel(status: Market["status"]): string {
+  return status === "unknown" ? "UNVERIFIED" : status.toUpperCase();
+}
+
 export function formatQuoteAmount(amount: number | null | undefined, asset: string | null | undefined): string {
   if (amount === null || amount === undefined || !Number.isFinite(amount) || !asset) return "Unavailable";
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(amount)} ${asset}`;

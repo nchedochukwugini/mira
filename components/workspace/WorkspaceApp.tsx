@@ -120,7 +120,7 @@ export function WorkspaceApp({ providerMode: initialProviderMode, providerEnviro
       setMarkets(found);
       // Catalog order is not user intent. Keep an explicitly focused market,
       // but never turn the first discovered row into the active trade market.
-      setActiveMarket((current) => current ? found.find((market) => market.id === current.id) ?? current : null);
+      setActiveMarket((current) => current ? found.find((market) => market.id === current.id) ?? null : null);
       setMarketStatus("ready");
       setProviderMode(payload.source ?? initialProviderMode);
       setProviderEnvironment(payload.environment ?? initialEnvironment);
