@@ -1,6 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { acquireAdvisoryLock, runWorkerCycles, safeErrorMessage, shouldAdvanceNewestCheckpoint, summarizeSnapshotObservations } from "./worker-runtime.ts";
+import { acquireAdvisoryLock, isVerifiedPantaEventIdentity, orderTradeScanCandidates, runBoundedCandidateAttempts, runWorkerCycles, safeErrorMessage, shouldAdvanceNewestCheckpoint, summarizeSnapshotObservations } from "./worker-runtime.ts";
+
+const failingMarketId = "GM2wvtGY5HaG3T4DiVnJTDXsScZLMc9JU9ABzSRGUvKn";
+
+test("the registered event address verifies despite Panta's shortened display title", () => {
+  const market = { id: failingMarketId, pantaEventPda: failingMarketId, pantaEventRegistryTitle: "Haaland 8+ points, GW6", pantaEventRegistryCreator: "registry-creator", question: "Haaland 8+ points, GW6" };
+  const observed = { marketId: failingMarketId, address: failingMarketId, event: { creator: "registry-creator", question: "Will Erling Haaland score 8 or more Fantasy Premier League points in Gameweek 6 (Liverpool v Manchester City)?" } };
+  assert.equal(isVerifiedPantaEventIdentity(market, observed), true);
+  assert.equal(isVerifiedPantaEventIdentity(market, { ...observed, address: "different-event-address" }), false);
+  assert.equal(isVerifiedPantaEventIdentity(market, { ...observed, marketId: "different-market" }), false);
+  assert.equal(isVerifiedPantaEventIdentity(market, { ...observed, event: { ...observed.event, creator: "different-creator" } }), false);
+  assert.equal(isVerifiedPantaEventIdentity({ ...market, pantaEventRegistryTitle: "unrelated title" }, observed), false);
+});
+
+test("a failed identity candidate falls through to the next bounded candidate", async () => {
+  const failed = { market: { status: "active" }, lastAttemptAt: 0, verified: false };
+  const valid = { market: { status: "active" }, lastAttemptAt: 0, verified: true };
+  const scanned = [];
+  const outcomes = await runBoundedCandidateAttempts([failed, valid], 2, async (candidate) => {
+    if (!candidate.verified) return undefined;
+    scanned.push(candidate);
+    return { cursor: "verified-candidate-cursor" };
+  });
+  assert.equal(outcomes.length, 2);
+  assert.equal(scanned.length, 1);
+  assert.equal(scanned[0], valid);
+  assert.equal(outcomes[0].value, undefined);
+  assert.equal(outcomes[1].value.cursor, "verified-candidate-cursor");
+});
+
+test("failed candidates rotate behind unattempted candidates without altering cursor state", () => {
+  const failed = { market: { status: "closed" }, lastAttemptAt: 1_000 };
+  const unattempted = { market: { status: "closed" }, lastAttemptAt: 0 };
+  assert.deepEqual(orderTradeScanCandidates([failed, unattempted], 1), [unattempted]);
+  assert.equal(shouldAdvanceNewestCheckpoint(true, false, false), false);
+});
 
 test("one-shot execution completes exactly one bounded cycle without waiting", async () => {
   let calls = 0;

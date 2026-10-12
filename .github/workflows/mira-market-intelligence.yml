@@ -22,7 +22,7 @@ jobs:
       PANTA_API_KEY: ${{ secrets.PANTA_API_KEY }}
       SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
       NEXT_PUBLIC_MARKET_PROVIDER: panta
-      MARKET_WORKER_MAX_MARKETS: "1"
+      MARKET_WORKER_MAX_MARKETS: "5"
       TRADE_MAX_SIGNATURES_PER_SCAN: "1000"
       TRADE_MAX_TRANSACTIONS_PER_CYCLE: "10"
       SOLANA_RPC_TIMEOUT_MS: "15000"
@@ -80,3 +80,8 @@ jobs:
         env:
           MIRA_WORKER_STARTED_AT: ${{ steps.worker-start.outputs.at }}
         run: node scripts/verify-market-worker-data.mjs
+      - name: Inspect pending transaction outcomes (read only)
+        if: always() && steps.required-secrets.outputs.ready == 'true' && steps.target-check.outcome == 'success'
+        env:
+          MIRA_WORKER_STARTED_AT: ${{ steps.worker-start.outputs.at }}
+        run: node --conditions=react-server --import tsx scripts/inspect-pending-market-transactions.mjs

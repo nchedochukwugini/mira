@@ -7,7 +7,7 @@ import { decodeOrderMatchedEventRaw, PANTA_CLOB_PROGRAM_ID, PANTA_ORDER_MATCHED_
 import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana/rpc";
 import { readPantaBuildContext } from "@/lib/panta/transaction-security";
 import { decimalNotionalFromRawUnits, identifyPantaFillQuoteMint, SOLANA_MAINNET_USDC_MINT } from "@/lib/panta/quote-asset";
-import { acquireAdvisoryLock, runWorkerCycles, safeErrorMessage, shouldAdvanceNewestCheckpoint } from "./worker-runtime";
+import { acquireAdvisoryLock, isVerifiedPantaEventIdentity, orderTradeScanCandidates, runBoundedCandidateAttempts, runWorkerCycles, safeErrorMessage, shouldAdvanceNewestCheckpoint } from "./worker-runtime";
 const tradeInterval = Math.max(15_000, Number(process.env.TRADE_HISTORY_POLL_INTERVAL_MS) || 45_000);
 const maxMarkets = Math.max(1, Math.min(20, Number(process.env.MARKET_WORKER_MAX_MARKETS) || 10));
 const maxSignaturesPerScan = Math.max(100, Math.min(10_000, Number(process.env.TRADE_MAX_SIGNATURES_PER_SCAN) || 10_000));
@@ -59,18 +59,25 @@ function transactionInstructions(transaction: NonNullable<Awaited<ReturnType<Ret
 async function scanMarket(market: Awaited<ReturnType<ReturnType<typeof getMarketProvider>["discoverMarkets"]>>[number], connection: ReturnType<typeof createSolanaMainnetConnection>) {
   const eventAddress = market.pantaEventPda;
   if (!eventAddress || market.phase !== "secondary" || market.pantaSecondaryActive !== true || market.pantaIsGraduated !== true) return;
+  const marketDbId = await upsertMarket(market);
   let event: PublicKey;
-  try { event = new PublicKey(eventAddress); } catch { return; }
-  const verified = (await getPantaEventData([market])).get(market.id);
-  if (!verified || verified.event.question.trim() !== market.question.trim()) {
-    log("event_unverified", { marketId: market.id });
+  try { event = new PublicKey(eventAddress); } catch {
+    await recordScanAttemptFailure(marketDbId, eventAddress, "invalid_registry_event_address");
+    log("event_unverified", { marketId: market.id, reason: "invalid_registry_event_address" });
     return;
   }
-  const marketDbId = await upsertMarket(market);
-  const state = await getPool().query("SELECT newest_signature,backfill_signature,initial_scan_complete FROM panta_trade_scans WHERE market_id=$1", [marketDbId]);
-  const checkpoint = state.rows[0]?.newest_signature as string | undefined;
-  const initialComplete = state.rows[0]?.initial_scan_complete === true;
-  let backfillCursor = state.rows[0]?.backfill_signature as string | null ?? null;
+  const verified = (await getPantaEventData([market])).get(market.id);
+  if (!verified || !isVerifiedPantaEventIdentity(market, verified)) {
+    await recordScanAttemptFailure(marketDbId, eventAddress, "event_identity_unverified");
+    log("event_unverified", { marketId: market.id, reason: "registry_address_or_owned_event_layout_mismatch" });
+    return;
+  }
+  log("event_identity_verified", { marketId: market.id, eventAddress: eventAddress, titleMatchesEventQuestion: verified.event.question.trim() === market.question.trim() });
+  const state = await getPool().query("SELECT event_pda,newest_signature,backfill_signature,initial_scan_complete FROM panta_trade_scans WHERE market_id=$1", [marketDbId]);
+  const sameEvent = !state.rows[0]?.event_pda || state.rows[0].event_pda === eventAddress;
+  const checkpoint = sameEvent ? state.rows[0]?.newest_signature as string | undefined : undefined;
+  const initialComplete = sameEvent && state.rows[0]?.initial_scan_complete === true;
+  let backfillCursor = sameEvent ? state.rows[0]?.backfill_signature as string | null ?? null : null;
   let newest: { signature: string; slot: number } | undefined;
   let reachedCheckpoint = false;
   let headExhausted = false;
@@ -128,9 +135,10 @@ async function scanMarket(market: Awaited<ReturnType<ReturnType<typeof getMarket
     const scanComplete = historyExhausted || (!checkpoint && headExhausted);
     await client.query(`INSERT INTO panta_trade_scans(market_id,event_pda,newest_signature,newest_slot,backfill_signature,initial_scan_complete,last_success_at,last_error)
       VALUES($1,$2,$3,$4,$5,$6,now(),NULL) ON CONFLICT(market_id) DO UPDATE SET event_pda=EXCLUDED.event_pda,
-      newest_signature=CASE WHEN $7 THEN COALESCE(EXCLUDED.newest_signature,panta_trade_scans.newest_signature) ELSE panta_trade_scans.newest_signature END,newest_slot=CASE WHEN $7 THEN COALESCE(EXCLUDED.newest_slot,panta_trade_scans.newest_slot) ELSE panta_trade_scans.newest_slot END,
-      backfill_signature=CASE WHEN panta_trade_scans.initial_scan_complete THEN NULL ELSE EXCLUDED.backfill_signature END,
-      initial_scan_complete=panta_trade_scans.initial_scan_complete OR EXCLUDED.initial_scan_complete,last_success_at=now(),last_error=NULL,updated_at=now()`, [marketDbId, eventAddress, newest?.signature ?? null, newest?.slot ?? null, backfillCursor, scanComplete, advanceCheckpoint]);
+      newest_signature=CASE WHEN panta_trade_scans.event_pda<>EXCLUDED.event_pda THEN EXCLUDED.newest_signature WHEN $7 THEN COALESCE(EXCLUDED.newest_signature,panta_trade_scans.newest_signature) ELSE panta_trade_scans.newest_signature END,
+      newest_slot=CASE WHEN panta_trade_scans.event_pda<>EXCLUDED.event_pda THEN EXCLUDED.newest_slot WHEN $7 THEN COALESCE(EXCLUDED.newest_slot,panta_trade_scans.newest_slot) ELSE panta_trade_scans.newest_slot END,
+      backfill_signature=EXCLUDED.backfill_signature,
+      initial_scan_complete=CASE WHEN panta_trade_scans.event_pda<>EXCLUDED.event_pda THEN EXCLUDED.initial_scan_complete ELSE panta_trade_scans.initial_scan_complete OR EXCLUDED.initial_scan_complete END,last_success_at=now(),last_error=NULL,updated_at=now()`, [marketDbId, eventAddress, newest?.signature ?? null, newest?.slot ?? null, backfillCursor, scanComplete, advanceCheckpoint]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   const fetched = headFetched + olderFetched;
@@ -139,12 +147,19 @@ async function scanMarket(market: Awaited<ReturnType<ReturnType<typeof getMarket
   return { marketId: market.id, fetched, queued: discovered.size, newestSignature, backfillSignature: backfillCursor, checkpointReached: reachedCheckpoint, checkpointAdvanced: advanceCheckpoint, historyComplete: historyExhausted };
 }
 
+async function recordScanAttemptFailure(marketDbId: string, eventAddress: string, reason: string) {
+  await getPool().query(`INSERT INTO panta_trade_scans(market_id,event_pda,newest_signature,newest_slot,backfill_signature,initial_scan_complete,last_success_at,last_error)
+    SELECT $1,$2,NULL,NULL,NULL,false,NULL,$3
+    ON CONFLICT(market_id) DO UPDATE SET last_error=EXCLUDED.last_error,updated_at=now()`, [marketDbId, eventAddress, reason]);
+}
+
 async function processPending(connection: ReturnType<typeof createSolanaMainnetConnection>) {
   const result = await getPool().query(`SELECT p.signature,p.market_id,p.event_pda,p.slot,p.block_time,p.attempts,m.provider_market_id
     FROM panta_pending_transactions p JOIN markets m ON m.id=p.market_id
     WHERE p.status IN ('discovered','unavailable') AND p.next_attempt_at<=now() AND p.attempts<$1
     ORDER BY p.discovered_at LIMIT $2`, [maxAttempts, maxTransactionsPerCycle]);
   let processed = 0;
+  const outcomes = new Map<string, number>();
   const marketContexts = new Map<string, ReturnType<typeof readPantaBuildContext>>();
   for (const row of result.rows) {
     if (stopping) break;
@@ -208,11 +223,13 @@ async function processPending(connection: ReturnType<typeof createSolanaMainnetC
     await getPool().query(`UPDATE panta_pending_transactions SET status=$3,attempts=$4,last_error=$5,
       next_attempt_at=now()+($6::text || ' seconds')::interval,updated_at=now() WHERE signature=$1 AND market_id=$2`,
       [signature,marketDbId,status,attempts,errorText,retryDelaySeconds]);
+    const outcomeKey = `${String(row.provider_market_id)}:${status}`;
+    outcomes.set(outcomeKey, (outcomes.get(outcomeKey) ?? 0) + 1);
     if (status === "matched") log("matched_fill_verified", { marketId: row.provider_market_id, signature });
     processed++;
   }
-  await getPool().query(`UPDATE panta_trade_scans s SET unresolved_count=(SELECT count(*) FROM panta_pending_transactions p WHERE p.market_id=s.market_id AND p.status IN ('discovered','unavailable')),updated_at=now()`);
-  return processed;
+  await getPool().query(`UPDATE panta_trade_scans s SET unresolved_count=(SELECT count(*) FROM panta_pending_transactions p WHERE p.market_id=s.market_id AND p.status IN ('discovered','unavailable')) WHERE s.unresolved_count IS DISTINCT FROM (SELECT count(*) FROM panta_pending_transactions p WHERE p.market_id=s.market_id AND p.status IN ('discovered','unavailable'))`);
+  return { attempted: processed, byMarketAndStatus: Object.fromEntries(outcomes) };
 }
 
 async function run() {
@@ -231,19 +248,31 @@ async function run() {
         const candidates = markets.filter((m) => m.source === "panta" && m.phase === "secondary" && m.pantaSecondaryActive === true && m.pantaIsGraduated === true && Boolean(m.pantaEventPda));
         const tracked = await Promise.all(candidates.map(async (market) => {
           const id = await upsertMarket(market);
-          const saved = await getPool().query("SELECT last_success_at FROM panta_trade_scans WHERE market_id=$1", [id]);
-          return { market, lastScanned: saved.rows[0]?.last_success_at ? new Date(saved.rows[0].last_success_at as string | Date).getTime() : 0 };
+          const saved = await getPool().query("SELECT updated_at,last_success_at FROM panta_trade_scans WHERE market_id=$1", [id]);
+          const attemptAt = saved.rows[0]?.updated_at ?? saved.rows[0]?.last_success_at;
+          return { market, marketDbId: id, lastAttemptAt: attemptAt ? new Date(attemptAt as string | Date).getTime() : 0 };
         }));
-        tracked.sort((a, b) => Number(b.market.status === "active") - Number(a.market.status === "active") || a.lastScanned - b.lastScanned);
-        const eligible = tracked.slice(0, maxMarkets).map((item) => item.market);
-        const scans: Array<Awaited<ReturnType<typeof scanMarket>>> = [];
-        for (const market of eligible) {
-          const scan = await scanMarket(market, connection);
-          scans.push(scan);
+        const eligible = orderTradeScanCandidates(tracked, maxMarkets);
+        const outcomes = await runBoundedCandidateAttempts(eligible, maxMarkets, (item) => scanMarket(item.market, connection));
+        const scans = outcomes.flatMap((outcome) => outcome.status === "completed" && outcome.value ? [outcome.value] : []);
+        let candidateScanErrors = 0;
+        let eventIdentitySkips = 0;
+        for (const outcome of outcomes) {
+          if (outcome.status === "completed" && !outcome.value) { eventIdentitySkips++; continue; }
+          if (outcome.status === "failed") {
+            candidateScanErrors++;
+            const eventAddress = outcome.item.market.pantaEventPda ?? "";
+            await recordScanAttemptFailure(outcome.item.marketDbId, eventAddress, "candidate_scan_failed");
+            log("market_scan_error", { marketId: outcome.item.market.id, message: safeErrorMessage(outcome.error) });
+          }
         }
         const processed = await processPending(connection);
+        if (outcomes.length > 0 && scans.length === 0) {
+          log("trade_poll_no_verified_candidate", { marketsDiscovered: markets.length, marketsScanned: outcomes.length, eventIdentitySkips, candidateScanErrors, transactionsAttempted: processed.attempted, pendingTransactionOutcomes: processed.byMarketAndStatus });
+          throw new Error("No selected market passed Panta Event identity verification; no scan cursor was advanced.");
+        }
         lastTradeRun = new Date().toISOString();
-        return { marketsDiscovered: markets.length, marketsScanned: eligible.length, signaturesFetched: scans.reduce((sum, item) => sum + (item?.fetched ?? 0), 0), transactionsQueued: scans.reduce((sum, item) => sum + (item?.queued ?? 0), 0), transactionsAttempted: processed, cursors: scans.flatMap((item) => item ? [{ marketId: item.marketId, newestSignature: item.newestSignature, backfillSignature: item.backfillSignature, checkpointReached: item.checkpointReached, historyComplete: item.historyComplete }] : []), lastTradeRun };
+        return { marketsDiscovered: markets.length, marketsScanned: outcomes.length, candidateScanErrors, eventIdentitySkips, signaturesFetched: scans.reduce((sum, item) => sum + item.fetched, 0), transactionsQueued: scans.reduce((sum, item) => sum + item.queued, 0), transactionsAttempted: processed.attempted, pendingTransactionOutcomes: processed.byMarketAndStatus, cursors: scans.map((item) => ({ marketId: item.marketId, newestSignature: item.newestSignature, backfillSignature: item.backfillSignature, checkpointReached: item.checkpointReached, historyComplete: item.historyComplete })), lastTradeRun };
       }, wait, intervalMs: tradeInterval, shouldStop: () => stopping, log: (event, detail) => log(event === "cycle_complete" ? "trade_poll_complete" : "trade_poll_error", detail) });
   } finally {
     log("trade_worker_stopping", { lastTradeRun });

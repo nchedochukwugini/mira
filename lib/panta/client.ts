@@ -19,7 +19,7 @@ export function applyAuthoritativeQuoteMetadata(market: Market, metadata: unknow
   const marketUuid = text(row.id, row.eventId, row.event_id);
   const matches = Boolean(pda && (marketUuid === market.id || pda === market.id || pda === market.pantaEventPda));
   if (!matches) {
-    return { ...market, quoteAsset: null, quoteAssetResolution: { asset: null, status: "unresolved", source: "none", observedAt: null, rawAuthoritative: null, rawProvider: market.quoteAssetRaw ?? null, message: "Panta event metadata did not match the market PDA." }, yesProbability: null, noProbability: null, history: [], pantaPrices: { yes: null, no: null, quoteAsset: null, kind: market.priceProvenance?.kind ?? "unknown", observedAt: null }, primaryPoolLiquidityUsd: null, primaryPoolLiquidity: normalizePrimaryPoolAmount(market.primaryPoolLiquidity?.rawBaseUnits, null), activeVolume: { amount: null, asset: null, source: null, observedAt: null }, totalVolume: { amount: null, asset: null, source: null, observedAt: null }, volumeUsd: null, totalVolumeUsd: null };
+    return { ...market, pantaEventPda: null, pantaEventRegistryTitle: null, pantaEventRegistryCreator: null, quoteAsset: null, quoteAssetResolution: { asset: null, status: "unresolved", source: "none", observedAt: null, rawAuthoritative: null, rawProvider: market.quoteAssetRaw ?? null, message: "Panta event metadata did not match the market PDA." }, yesProbability: null, noProbability: null, history: [], pantaPrices: { yes: null, no: null, quoteAsset: null, kind: market.priceProvenance?.kind ?? "unknown", observedAt: null }, primaryPoolLiquidityUsd: null, primaryPoolLiquidity: normalizePrimaryPoolAmount(market.primaryPoolLiquidity?.rawBaseUnits, null), activeVolume: { amount: null, asset: null, source: null, observedAt: null }, totalVolume: { amount: null, asset: null, source: null, observedAt: null }, volumeUsd: null, totalVolumeUsd: null };
   }
   const rawAuthoritative = text(row.quoteAsset, row.quote_asset);
   const asset = normalizeQuoteAsset(rawAuthoritative);
@@ -69,6 +69,8 @@ export function applyAuthoritativeQuoteMetadata(market: Market, metadata: unknow
   return {
     ...market,
     pantaEventPda: pda,
+    pantaEventRegistryTitle: text(row.title),
+    pantaEventRegistryCreator: text(row.creatorAddress, row.creator_address),
     quoteAsset: asset,
     quoteAssetResolution: resolution,
     primaryPoolLiquidity: pool,

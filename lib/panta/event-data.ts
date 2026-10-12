@@ -5,7 +5,8 @@ import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana
 import { decodePantaEvent, PANTA_CLOB_PROGRAM_ID, type DecodedPantaEvent } from "@/lib/panta/clob-layout";
 
 const CACHE_MS = 5_000;
-const cache = new Map<string, { expiresAt: number; event: DecodedPantaEvent | null; observedAt: string; slot: number | null }>();
+type CachedEvent = { expiresAt: number; marketId: string; address: string; event: DecodedPantaEvent | null; observedAt: string; slot: number | null };
+const cache = new Map<string, CachedEvent>();
 
 function baseUnitsPerUnit(market: Market): number | null {
   return market.quoteAsset === "SOL" ? 1_000_000_000 : market.quoteAsset === "USDC" ? 1_000_000 : null;
@@ -50,19 +51,19 @@ export function applyDecodedPantaEvent(market: Market, event: DecodedPantaEvent,
   };
 }
 
-export async function getPantaEventData(markets: Market[]): Promise<Map<string, { event: DecodedPantaEvent; observedAt: string; slot: number }>> {
-  const result = new Map<string, { event: DecodedPantaEvent; observedAt: string; slot: number }>();
+export async function getPantaEventData(markets: Market[]): Promise<Map<string, { marketId: string; address: string; event: DecodedPantaEvent; observedAt: string; slot: number }>> {
+  const result = new Map<string, { marketId: string; address: string; event: DecodedPantaEvent; observedAt: string; slot: number }>();
   const uncached: Array<{ marketId: string; cacheKey: string; key: PublicKey }> = [];
   for (const market of markets.slice(0, 16)) {
     const address = market.pantaEventPda ?? market.id;
     const cacheKey = `${market.id}:${address}`;
     const existing = cache.get(cacheKey);
     if (existing && existing.expiresAt > Date.now()) {
-      if (existing.event && existing.slot !== null) result.set(market.id, { event: existing.event, observedAt: existing.observedAt, slot: existing.slot });
+      if (existing.event && existing.slot !== null) result.set(market.id, { marketId: market.id, address, event: existing.event, observedAt: existing.observedAt, slot: existing.slot });
       continue;
     }
     try { uncached.push({ marketId: market.id, cacheKey, key: new PublicKey(address) }); }
-    catch { cache.set(cacheKey, { event: null, observedAt: new Date().toISOString(), slot: null, expiresAt: Date.now() + CACHE_MS }); }
+    catch { cache.set(cacheKey, { marketId: market.id, address, event: null, observedAt: new Date().toISOString(), slot: null, expiresAt: Date.now() + CACHE_MS }); }
   }
   if (!uncached.length) return result;
   try {
@@ -74,12 +75,13 @@ export async function getPantaEventData(markets: Market[]): Promise<Map<string, 
     accounts.value.forEach((account, index) => {
       const { marketId, cacheKey } = uncached[index]!;
       const event = account && account.owner.equals(owner) ? decodePantaEvent(account.data) : null;
-      cache.set(cacheKey, { event, observedAt, slot: accounts.context.slot, expiresAt: Date.now() + CACHE_MS });
-      if (event) result.set(marketId, { event, observedAt, slot: accounts.context.slot });
+      const address = uncached[index]!.key.toBase58();
+      cache.set(cacheKey, { marketId, address, event, observedAt, slot: accounts.context.slot, expiresAt: Date.now() + CACHE_MS });
+      if (event) result.set(marketId, { marketId, address, event, observedAt, slot: accounts.context.slot });
     });
   } catch {
     const observedAt = new Date().toISOString();
-    for (const { marketId, cacheKey } of uncached) { void marketId; cache.set(cacheKey, { event: null, observedAt, slot: null, expiresAt: Date.now() + CACHE_MS }); }
+    for (const { marketId, cacheKey, key } of uncached) cache.set(cacheKey, { marketId, address: key.toBase58(), event: null, observedAt, slot: null, expiresAt: Date.now() + CACHE_MS });
   }
   return result;
 }

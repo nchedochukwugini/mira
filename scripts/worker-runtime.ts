@@ -10,6 +10,40 @@ export function shouldAdvanceNewestCheckpoint(hasCheckpoint: boolean, reachedChe
   return !hasCheckpoint || reachedCheckpoint || exhausted;
 }
 
+/** Bind a decoded, Panta-owned Event account to the exact registry address. Titles are display metadata, not account identity. */
+export function isVerifiedPantaEventIdentity(
+  market: { id: string; question: string; pantaEventPda?: string | null; pantaEventRegistryTitle?: string | null; pantaEventRegistryCreator?: string | null },
+  observed: { marketId: string; address: string; event: { question: string; creator: string } } | undefined,
+) {
+  const registryTitle = market.pantaEventRegistryTitle?.trim();
+  const titleBoundToRegistry = registryTitle
+    ? market.question.trim() === registryTitle || market.question.trim() === observed?.event.question.trim()
+    : market.question.trim() === observed?.event.question.trim();
+  return Boolean(
+    observed && market.pantaEventPda &&
+    observed.marketId === market.id &&
+    observed.address === market.pantaEventPda &&
+    market.pantaEventRegistryCreator && observed.event.creator === market.pantaEventRegistryCreator &&
+    observed.event.question.trim() && titleBoundToRegistry,
+  );
+}
+
+export function orderTradeScanCandidates<T extends { market: { status: string }; lastAttemptAt: number }>(items: T[], limit: number) {
+  return [...items]
+    .sort((a, b) => Number(b.market.status === "active") - Number(a.market.status === "active") || a.lastAttemptAt - b.lastAttemptAt)
+    .slice(0, Math.max(0, limit));
+}
+
+/** Run a bounded sequential batch; an individual candidate failure cannot starve later candidates. */
+export async function runBoundedCandidateAttempts<T, R>(items: T[], limit: number, attempt: (item: T) => Promise<R>) {
+  const outcomes: Array<{ item: T; status: "completed"; value: R } | { item: T; status: "failed"; error: unknown }> = [];
+  for (const item of items.slice(0, Math.max(0, limit))) {
+    try { outcomes.push({ item, status: "completed", value: await attempt(item) }); }
+    catch (error) { outcomes.push({ item, status: "failed", error }); }
+  }
+  return outcomes;
+}
+
 export function summarizeSnapshotObservations(observations: Array<{ dataStatus: string }>) {
   return {
     partial: observations.filter((item) => item.dataStatus === "partial").length,

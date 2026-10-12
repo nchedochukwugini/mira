@@ -63,6 +63,9 @@ export type Market = {
   quoteAssetRaw?: string | null;
   /** Solana Event account address; distinct from Panta's UUID market id. */
   pantaEventPda?: string | null;
+  /** Official event-registry metadata used to bind the display market to its on-chain account. */
+  pantaEventRegistryTitle?: string | null;
+  pantaEventRegistryCreator?: string | null;
   dataRetrievedAt?: string | null;
   primaryPoolLiquidity?: QuoteAmount & { rawBaseUnits: string | null; baseUnitsPerUnit: number | null; state: "finalized_snapshot" | "current" | "unavailable" };
   primaryPoolLiquidityStatus?: "verified" | "conflict" | "unavailable";
