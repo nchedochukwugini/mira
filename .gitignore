@@ -55,3 +55,7 @@ Thumbs.db
 /panta-x11.png
 /research/verification/screenshots/
 /training/artifacts/
+
+# `build/` is ignored globally for generated output; this is a real Next.js API route.
+!app/api/trade/secondary/build/
+!app/api/trade/secondary/build/route.ts

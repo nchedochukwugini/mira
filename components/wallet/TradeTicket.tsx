@@ -11,6 +11,7 @@ import { MiraCharacter } from "@/components/mira/MiraCharacter";
 import { WalletButton } from "@/components/wallet/WalletButton";
 import { MarketIdControl } from "@/components/markets/MarketIdControl";
 import { canOpenWalletSigning, isQuoteExpired } from "@/lib/panta/trade-safety";
+import { readJsonApiResponse, transactionNetworkError } from "@/lib/http/json-api-response";
 
 type Stage = "edit" | "quoting" | "building" | "prepared" | "signing" | "broadcasting" | "verifying" | "complete" | "failed" | "broadcast-unknown";
 const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
@@ -235,10 +236,10 @@ function SecondaryTradeTicket({ market, initialOutcome, wallet, onWallet, onClos
     if (recoveryKey) try { localStorage.removeItem(recoveryKey); } catch { /* optional */ }
     try {
       const response = await fetch("/api/trade/secondary/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operationType, marketId: market.id, wallet: wallet.publicKey.toBase58(), side, price, shares, buy, targetOrder }) });
-      const payload = await response.json() as { data?: { operationId: string; marketId: string; wallet: string; instructions: PantaTradeBuild["instructions"]; recentBlockhash: string; lastValidBlockHeight: number; expiresAt: string }; error?: string };
-      if (!response.ok || !payload.data) throw new Error(payload.error ?? "Secondary build was rejected.");
+      const payload = await readJsonApiResponse<{ data?: { operationId: string; marketId: string; wallet: string; instructions: PantaTradeBuild["instructions"]; recentBlockhash: string; lastValidBlockHeight: number; expiresAt: string } }>(response);
+      if (!payload.data) throw new Error("MIRA returned no prepared transaction. No transaction was signed or broadcast.");
       setBuild(payload.data); setStage("prepared");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Secondary build failed."); setStage("failed"); }
+    } catch (cause) { setError(transactionNetworkError(cause)); setStage("failed"); }
   }
 
   async function signAndSubmit() {
