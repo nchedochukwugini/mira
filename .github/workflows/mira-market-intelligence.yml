@@ -37,12 +37,16 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in DATABASE_URL_DIRECT PANTA_API_KEY SOLANA_RPC_URL; do
+          for name in PANTA_API_KEY SOLANA_RPC_URL; do
             if [[ -z "${!name:-}" ]]; then
               echo "Required Actions secret is missing: $name"
               missing=1
             fi
           done
+          if [[ -z "${DATABASE_URL:-}" ]]; then
+            echo "Required Actions secret is missing: DATABASE_URL_DIRECT"
+            missing=1
+          fi
           if [[ "$missing" == "1" ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
