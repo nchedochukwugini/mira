@@ -160,6 +160,7 @@ export function mergeMarketCatalogQuotes(detail: Market, catalog: Market | undef
     question: detail.question.trim() && detail.question !== "Market title unavailable"
       ? detail.question
       : catalog.question,
+    imageUrl: detail.imageUrl ?? catalog.imageUrl,
     // A disagreement has no source timestamp or documented precedence, so do
     // not silently choose one endpoint's measured value.
     yesProbability: mergeMeasuredValue(detail.yesProbability, catalog.yesProbability),
@@ -325,13 +326,18 @@ export class PantaClient {
     const detail = quoteResolved ? chainData ? applyDecodedPantaEvent(quoteResolved, chainData.event, chainData.observedAt, chainData.slot) : quoteResolved : null;
     if (detail) this.marketDetailCache.set(id, { market: detail, kind: detail.phase === "secondary" ? "secondary" : "primary-pool", expiresAt: Date.now() + 5_000 });
     const hasTitle = Boolean(detail?.question.trim()) && detail?.question !== "Market title unavailable";
-    if (!detail || (detail.yesProbability !== null && detail.noProbability !== null && hasTitle && detail.status !== "unknown")) return detail;
+    if (!detail) return null;
+    const detailHasCoreFields = detail.yesProbability !== null && detail.noProbability !== null && hasTitle && detail.status !== "unknown";
+    if (detailHasCoreFields && detail.imageUrl) return detail;
     let catalog = this.marketCatalog;
     if (!catalog || catalog.expiresAt <= Date.now()) {
-      await this.discoverMarkets(undefined, signal);
+      try { await this.discoverMarkets(undefined, signal); }
+      catch { return detail; }
       catalog = this.marketCatalog;
     }
-    return mergeMarketCatalogQuotes(detail, catalog?.byId.get(id));
+    const catalogMarket = catalog?.byId.get(id);
+    if (detailHasCoreFields) return { ...detail, imageUrl: detail.imageUrl ?? catalogMarket?.imageUrl ?? null };
+    return mergeMarketCatalogQuotes(detail, catalogMarket);
   }
 
   async getMarketTrades(marketId: string): Promise<unknown[]> {
