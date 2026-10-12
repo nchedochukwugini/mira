@@ -8,7 +8,13 @@ import type { InstructionAccount } from "@/lib/panta/secondary-instructions";
 
 const PROGRAM = new PublicKey(PANTA_CLOB_PROGRAM_ID);
 const DEFAULT_KEY = SystemProgram.programId.toBase58();
-const MAX_TRAVERSE = 32;
+/** Current production MarketConfig is 50; MIRA keeps its own smaller read bound. */
+export const MAX_SUPPORTED_PANTA_TRAVERSE = 50;
+export const MIRA_MAX_MAKER_TRAVERSAL = 32;
+
+export function isSupportedPantaTraversalLimit(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0 && value <= MAX_SUPPORTED_PANTA_TRAVERSE;
+}
 
 export type SecondaryMakerSnapshot = {
   priceLevel: DecodedPriceLevel;
@@ -52,7 +58,7 @@ export async function discoverSecondaryMakers(input: {
   maxTraversePerTx: number;
 }): Promise<SecondaryMakerSnapshot> {
   const { connection, event, price } = input;
-  const limit = Math.min(Math.max(1, Math.trunc(input.maxTraversePerTx)), MAX_TRAVERSE);
+  const limit = Math.min(Math.max(1, Math.trunc(input.maxTraversePerTx)), MIRA_MAX_MAKER_TRAVERSAL);
   const expectedLevelAddress = deriveLevel(event, price);
   const first = await connection.getAccountInfoAndContext(expectedLevelAddress, { commitment: "confirmed" });
   if (!first.value || !first.value.owner.equals(PROGRAM)) throw new Error("The requested USDC price level is missing or is not owned by the Panta program.");

@@ -1,11 +1,12 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { PublicKey, SystemProgram, TransactionMessage } from "@solana/web3.js";
+import { PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { createSecondaryOperation } from "@/lib/db";
 import { jsonApiError } from "@/lib/http/json-api-response";
 import { getMarketProvider } from "@/lib/providers/market-provider";
 import { assertSolanaMainnet, createSolanaMainnetConnection } from "@/lib/solana/rpc";
 import { decodeOrderNode, PANTA_CLOB_PROGRAM_ID } from "@/lib/panta/clob-layout";
-import { discoverSecondaryMakers } from "@/lib/panta/secondary-book";
+import { discoverSecondaryMakers, isSupportedPantaTraversalLimit } from "@/lib/panta/secondary-book";
+import { fitsSecondaryTransactionLimits } from "@/lib/panta/secondary-transaction-limits";
 import { buildSecondaryCancellationInstruction, buildSecondaryPlacementInstruction, instructionToWalletFormat, secondaryPriceUnits, secondaryShareUnits } from "@/lib/panta/secondary-instructions";
 import { readPantaBuildContext } from "@/lib/panta/transaction-security";
 
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
     if (!context.eventState.isActive || !context.eventState.isGraduated || context.eventState.isResolved || context.eventState.isCancelled) {
       return jsonApiError("market_not_active", "The on-chain Event is not active for secondary trading.", 409);
     }
-    if (context.priceTickSize <= BigInt(0) || context.maxTraversePerTx <= 0 || context.maxTraversePerTx > 32) return jsonApiError("unsupported_market_config", "Panta MarketConfig has unsupported secondary traversal settings.", 409);
+    if (context.priceTickSize <= BigInt(0) || !isSupportedPantaTraversalLimit(context.maxTraversePerTx)) return jsonApiError("unsupported_market_config", "Panta MarketConfig has unsupported secondary traversal settings.", 409);
     const connection = createSolanaMainnetConnection();
     await assertSolanaMainnet(connection);
     let instruction;
@@ -142,6 +143,13 @@ export async function POST(request: Request) {
     const blockhashValid = await connection.isBlockhashValid(latest.blockhash, { commitment: "confirmed" });
     if (!blockhashValid.value || finalHeight > latest.lastValidBlockHeight) throw new Error("Build blockhash expired during final account revalidation.");
     const message = new TransactionMessage({ payerKey: user, recentBlockhash: latest.blockhash, instructions: [instruction] }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    let serializedSize: number;
+    try { serializedSize = transaction.serialize().length; }
+    catch { return jsonApiError("transaction_too_large", "This order requires more accounts than fit in a Solana v0 transaction. Reduce the order-book traversal and try again.", 413); }
+    if (!fitsSecondaryTransactionLimits({ serializedBytes: serializedSize, accountCount: message.staticAccountKeys.length })) {
+      return jsonApiError("transaction_too_large", "This order requires more accounts than fit in a Solana v0 transaction. Reduce the order-book traversal and try again.", 413);
+    }
     const expectedMessageBase64 = Buffer.from(message.serialize()).toString("base64");
     const expectedInstructions = [instructionToWalletFormat(instruction)];
     const operationId = randomUUID();
