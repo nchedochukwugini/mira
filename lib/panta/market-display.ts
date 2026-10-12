@@ -18,8 +18,8 @@ export function marketPoolLiquidityDisplay(market: Market) {
 export function formatProviderPrice(market: Market, outcome: "YES" | "NO"): string {
   if (market.quoteAsset === "USDC") {
     const value = outcome === "YES" ? market.yesProbability : market.noProbability;
-    return value === null ? "Unavailable" : `${(value * 100).toFixed(0)}%`;
+    return value === null ? "No quote" : `${(value * 100).toFixed(0)}%`;
   }
   const value = outcome === "YES" ? market.pantaPrices?.yes : market.pantaPrices?.no;
-  return value === null || value === undefined || !market.pantaPrices?.quoteAsset ? "Unavailable" : `${value.toFixed(4)} ${market.pantaPrices.quoteAsset}/share`;
+  return value === null || value === undefined || !market.pantaPrices?.quoteAsset ? "No quote" : `${value.toFixed(4)} ${market.pantaPrices.quoteAsset}/share`;
 }
